@@ -903,6 +903,12 @@ function setupTabs(): void {
       requestAnimationFrame(() => renderRepairPanel());
     }
 
+    tab.scrollIntoView({
+      block: 'nearest',
+      inline: 'nearest',
+      container: 'nearest',
+    } as ScrollIntoViewOptions);
+
     if (moveFocus) tab.focus();
   };
 
@@ -1129,6 +1135,18 @@ function renderProjectedMarkers(markers: ProjectedMarker[]): void {
       markerNodePool.delete(id);
     }
   }
+}
+
+// Keep 2D C-OTDR & Bathymetric cross-section canvas sharp across viewport & orientation changes
+if (seabedOtdrCanvas.parentElement && typeof ResizeObserver !== 'undefined') {
+  const otdrResizeObserver = new ResizeObserver(() => {
+    const cable = SUBSEA_CABLES.find((c) => c.id === inspectedCableId);
+    const st = currentSnapshot.cables.get(inspectedCableId);
+    if (cable && st && seabedOtdrCanvas.clientWidth > 0) {
+      renderSeabedAndOtdr(seabedOtdrCanvas, cable, st);
+    }
+  });
+  otdrResizeObserver.observe(seabedOtdrCanvas.parentElement);
 }
 
 // Boot
