@@ -1152,4 +1152,6 @@ if (seabedOtdrCanvas.parentElement && typeof ResizeObserver !== 'undefined') {
 // Boot
 initStaticControls();
 setupTabs();
+chkOrbit.checked = true;
+globe.setAutoOrbit(true);
 syncUI();

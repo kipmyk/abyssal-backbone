@@ -152,7 +152,7 @@ export class GlobeScene {
   };
   private snapshot: NetworkSnapshot | null = null;
 
-  private autoOrbit = false;
+  private autoOrbit = true;
   private showPulses = true;
   private showHeatmap = true;
   private motionPaused = false;
@@ -202,6 +202,8 @@ export class GlobeScene {
     this.controls.maxDistance = 42;
     this.controls.rotateSpeed = 0.65;
     this.controls.zoomSpeed = 0.85;
+    this.controls.autoRotateSpeed = 0.45;
+    this.controls.autoRotate = this.autoOrbit && !this.motionPaused && !this.reducedMotion;
 
     this.setupLighting();
     this.buildStarfield();
@@ -1426,6 +1428,7 @@ export class GlobeScene {
     }
 
     if (this.flyTargetPos) {
+      this.controls.autoRotate = false;
       const alpha = this.reducedMotion ? 0.45 : Math.min(1, dt * 4.2);
       const currDist = this.camera.position.length();
       const targetDist = this.flyTargetPos.length();
@@ -1443,6 +1446,9 @@ export class GlobeScene {
         this.flyTargetPos = null;
         this.flyLookTarget = null;
       }
+    } else {
+      this.controls.autoRotate =
+        this.autoOrbit && !this.motionPaused && !this.reducedMotion;
     }
 
     const pulseTime = now * 0.004;
