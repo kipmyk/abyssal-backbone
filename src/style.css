@@ -2345,26 +2345,64 @@ a:focus-visible {
   }
 }
 
-@media (pointer: coarse) {
+@media (pointer: coarse), (max-width: 720px) {
+  :root {
+    --target-size: 44px;
+  }
+
+  .btn-ghost,
+  .btn-restore,
+  .btn-icon,
+  .view-mode-btn,
+  .pill-btn,
   .mini-pill,
+  .subsea-cam-btn,
+  .cable-action-btn,
+  [role='tab'],
+  .toggle-item {
+    min-block-size: 44px;
+  }
+
   .toggletip-btn {
-    min-block-size: 36px;
-    min-inline-size: 36px;
+    min-block-size: 44px;
+    min-inline-size: 44px;
+    font-size: 0.8rem;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .repair-progress-fill {
-    transition: none;
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 
 /* Responsive adjustments */
 @media (max-width: 1180px) {
+  html,
+  body,
+  .app-shell,
+  .top-bar,
+  .workspace,
+  .hud-panel,
+  .app-footer {
+    max-inline-size: 100vw;
+    overflow-x: clip;
+  }
+
   .app-shell {
     grid-template-rows: auto auto auto;
     block-size: auto;
     min-block-size: 100dvh;
+  }
+
+  .app-shell.focus-mode .globe-viewport {
+    block-size: 68dvh;
+    min-block-size: 360px;
   }
 
   .app-footer {
@@ -2372,10 +2410,37 @@ a:focus-visible {
     align-items: flex-start;
     gap: 8px;
     padding: 10px 14px;
+    padding-block-end: max(12px, env(safe-area-inset-bottom, 12px));
   }
 
   .footer-credit {
     text-align: start;
+  }
+}
+
+@media (max-width: 720px) {
+  .kpi-simplified-path {
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    grid-column: 1 / -1;
+  }
+
+  .subsea-stage {
+    block-size: auto;
+    min-block-size: 360px;
+  }
+
+  .subsea-rov-viewport {
+    min-block-size: 220px;
+  }
+
+  .table-wrapper {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .dialog-search {
+    min-inline-size: 0;
+    inline-size: 100%;
   }
 }
 
@@ -2395,6 +2460,96 @@ a:focus-visible {
   .onboarding-banner {
     inset-block-end: 8px;
     padding: 10px 12px;
+  }
+
+  .sim-dialog {
+    inline-size: calc(100% - 16px);
+    max-block-size: 90dvh;
+  }
+}
+
+/* Base Phone (iPhone 11 375px and down to 360px) */
+@media (max-width: 480px) {
+  .top-bar {
+    padding-inline: 10px;
+  }
+
+  .header-actions {
+    gap: 6px;
+  }
+
+  .btn-ghost,
+  .btn-restore {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .trace-selectors {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .btn-icon#btn-swap-trace {
+    inline-size: 100%;
+  }
+
+  .otdr-telemetry-grid,
+  .trace-metrics,
+  .toggle-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .telemetry-table,
+  .telemetry-table thead,
+  .telemetry-table tbody,
+  .telemetry-table tr,
+  .telemetry-table th,
+  .telemetry-table td {
+    display: block;
+  }
+
+  .telemetry-table thead {
+    display: none;
+  }
+
+  .telemetry-table tr {
+    margin-block-end: 8px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    padding: 8px;
+  }
+
+  .telemetry-table td:nth-child(2)::before {
+    content: 'Base RTT: ';
+    color: var(--text-muted);
+  }
+
+  .telemetry-table td:nth-child(3)::before {
+    content: 'Live RTT: ';
+    color: var(--text-muted);
+  }
+
+  .telemetry-table td:nth-child(4)::before {
+    content: 'Status: ';
+    color: var(--text-muted);
+  }
+}
+
+@media (max-width: 380px) {
+  .kpi-strip {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 10px 12px;
+    gap: 8px;
+  }
+
+  .impact-metrics-grid,
+  .about-spec-grid,
+  .glossary-dl,
+  .assumptions-grid,
+  .otdr-telemetry-grid,
+  .trace-metrics,
+  .toggle-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
