@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "rolldown src/sim/verificationSuite.ts --platform node --format esm --file /tmp/verify_suite.mjs && node /tmp/verify_suite.mjs"
   },
   "dependencies": {
     "three": "^0.187.0",
