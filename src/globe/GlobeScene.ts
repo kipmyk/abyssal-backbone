@@ -72,6 +72,22 @@ interface PacketItem {
   direction: 1 | -1;
 }
 
+interface GlobeCameraFlight {
+  startDir: THREE.Vector3;
+  endDir: THREE.Vector3;
+  rotAxis: THREE.Vector3;
+  angle: number;
+  startDist: number;
+  endDist: number;
+  arcLift: number;
+  startTarget: THREE.Vector3;
+  endTarget: THREE.Vector3;
+  startFov: number;
+  endFov: number;
+  elapsed: number;
+  duration: number;
+}
+
 export interface HoverInfo {
   x: number;
   y: number;
@@ -158,8 +174,10 @@ export class GlobeScene {
   private motionPaused = false;
   private reducedMotion = false;
 
-  private flyTargetPos: THREE.Vector3 | null = null;
-  private flyLookTarget: THREE.Vector3 | null = null;
+  private cameraFlight: GlobeCameraFlight | null = null;
+  private readonly flightQuat = new THREE.Quaternion();
+  private readonly flightVec = new THREE.Vector3();
+  private readonly originVec = new THREE.Vector3(0, 0, 0);
   private animFrameId = 0;
   private lastTime = performance.now();
   private resizeObserver: ResizeObserver;
@@ -273,20 +291,81 @@ export class GlobeScene {
     this.controls.autoRotate = this.autoOrbit && !paused;
   }
 
+  private startCameraFlight(
+    endPos: THREE.Vector3,
+    endTarget: THREE.Vector3,
+    endFov: number
+  ): void {
+    const startDir = this.camera.position.clone().normalize();
+    const endDir = endPos.clone().normalize();
+    const startDist = this.camera.position.length();
+    const endDist = endPos.length();
+
+    const dot = THREE.MathUtils.clamp(startDir.dot(endDir), -1, 1);
+    const angle = Math.acos(dot);
+    const rotAxis = new THREE.Vector3().crossVectors(startDir, endDir);
+    if (rotAxis.lengthSq() < 1e-8) {
+      const fallback =
+        Math.abs(startDir.y) < 0.9
+          ? new THREE.Vector3(0, 1, 0)
+          : new THREE.Vector3(1, 0, 0);
+      rotAxis.crossVectors(startDir, fallback);
+    }
+    rotAxis.normalize();
+
+    const peakEndpointDist = Math.max(startDist, endDist);
+    const rawLift =
+      angle > 0.18
+        ? Math.sin(angle * 0.5) *
+          THREE.MathUtils.clamp(13.5 - peakEndpointDist * 0.24, 1.4, 6.2)
+        : 0;
+    const arcLift = Math.min(rawLift, Math.max(0, 38 - peakEndpointDist));
+
+    const duration = this.reducedMotion
+      ? 0.2
+      : THREE.MathUtils.clamp(
+          0.72 + angle * 0.52 + Math.abs(endDist - startDist) * 0.022,
+          0.8,
+          1.95
+        );
+
+    this.cameraFlight = {
+      startDir,
+      endDir,
+      rotAxis,
+      angle,
+      startDist,
+      endDist,
+      arcLift,
+      startTarget: this.controls.target.clone(),
+      endTarget: endTarget.clone(),
+      startFov: this.camera.fov,
+      endFov,
+      elapsed: 0,
+      duration,
+    };
+  }
+
   public flyTo(lat: number, lon: number, distance = 22): void {
-    this.flyTargetPos = latLonToVector3(lat, lon, distance);
-    this.flyLookTarget = new THREE.Vector3(0, 0, 0);
+    const endPos = latLonToVector3(lat, lon, distance);
+    this.startCameraFlight(endPos, new THREE.Vector3(0, 0, 0), 42);
   }
 
   /**
-   * Dives camera close to a subsea coordinate at an oblique bathymetric angle
-   * so the user can inspect the water surface, ROV tether, seabed relief, and repeaters.
+   * Dives camera close to a subsea coordinate along an orbital arc with
+   * latitude-compensated oblique framing and seabed-accurate pivot targeting.
    */
   public diveTo(lat: number, lon: number): void {
-    const targetNormal = latLonToVector3(lat, lon, 1).normalize();
-    // Offset slightly south-west for a dramatic 3D oblique dive perspective
-    this.flyTargetPos = latLonToVector3(lat - 5.5, lon - 6.0, 12.1);
-    this.flyLookTarget = targetNormal.multiplyScalar(GLOBE_RADIUS * 0.65);
+    const depthM = sampleSeabedDepthMeters(lat, lon);
+    const seabedRadius = GLOBE_RADIUS + depthMetersToWorldOffset(depthM);
+    const cosLat = Math.max(0.28, Math.cos(lat * DEG2RAD));
+    const latSign = lat >= 0 ? -1 : 1;
+    const camLat = THREE.MathUtils.clamp(lat + latSign * 4.8, -82, 82);
+    const camLon = lon - THREE.MathUtils.clamp(5.2 / cosLat, 4.5, 14);
+
+    const endPos = latLonToVector3(camLat, camLon, seabedRadius + 2.35);
+    const endTarget = latLonToVector3(lat, lon, seabedRadius);
+    this.startCameraFlight(endPos, endTarget, 46);
   }
 
   public triggerShockwave(cableId: string): void {
@@ -1273,10 +1352,13 @@ export class GlobeScene {
   private bindEvents(): void {
     const dom = this.renderer.domElement;
 
+    this.controls.addEventListener('start', () => {
+      this.cameraFlight = null;
+    });
+
     dom.addEventListener('pointerdown', (e) => {
       this.pointerDownPos = { x: e.clientX, y: e.clientY };
-      this.flyTargetPos = null;
-      this.flyLookTarget = null;
+      this.cameraFlight = null;
     });
 
     dom.addEventListener('pointermove', (e) => {
@@ -1427,29 +1509,73 @@ export class GlobeScene {
       this.onTickCallback(dt);
     }
 
-    if (this.flyTargetPos) {
+    if (this.cameraFlight) {
       this.controls.autoRotate = false;
-      const alpha = this.reducedMotion ? 0.45 : Math.min(1, dt * 4.2);
-      const currDist = this.camera.position.length();
-      const targetDist = this.flyTargetPos.length();
-      const nextDir = this.camera.position
-        .clone()
-        .normalize()
-        .lerp(this.flyTargetPos.clone().normalize(), alpha)
-        .normalize();
-      const nextDist = THREE.MathUtils.lerp(currDist, targetDist, alpha);
-      this.camera.position.copy(nextDir.multiplyScalar(nextDist));
-      if (this.flyLookTarget) {
-        this.controls.target.lerp(this.flyLookTarget, alpha);
+      const f = this.cameraFlight;
+      f.elapsed = Math.min(f.duration, f.elapsed + dt);
+      const t = f.duration > 0 ? f.elapsed / f.duration : 1;
+      // Quintic smoothstep for zero-jerk ease-in and ease-out
+      const eased = t * t * t * (t * (t * 6 - 15) + 10);
+
+      this.flightQuat.setFromAxisAngle(f.rotAxis, f.angle * eased);
+      this.flightVec.copy(f.startDir).applyQuaternion(this.flightQuat).normalize();
+      const baseDist = THREE.MathUtils.lerp(f.startDist, f.endDist, eased);
+      const arcBoost = Math.sin(Math.PI * eased) * f.arcLift;
+      this.camera.position.copy(this.flightVec.multiplyScalar(baseDist + arcBoost));
+
+      this.controls.target.lerpVectors(f.startTarget, f.endTarget, eased);
+
+      const nextFov = THREE.MathUtils.lerp(f.startFov, f.endFov, eased);
+      if (Math.abs(this.camera.fov - nextFov) > 0.01) {
+        this.camera.fov = nextFov;
+        this.camera.updateProjectionMatrix();
       }
-      if (this.camera.position.distanceTo(this.flyTargetPos) < 0.08) {
-        this.flyTargetPos = null;
-        this.flyLookTarget = null;
+
+      if (t >= 1) {
+        this.cameraFlight = null;
       }
     } else {
       this.controls.autoRotate =
         this.autoOrbit && !this.motionPaused && !this.reducedMotion;
+
+      const camRadius = this.camera.position.length();
+      // Gently re-center pivot to Earth's core when pulling back to orbital overview
+      if (camRadius > 19.5 && this.controls.target.lengthSq() > 0.0001) {
+        const recenterFactor = THREE.MathUtils.clamp((camRadius - 19.5) / 8, 0, 1);
+        const recenterAlpha = Math.min(1, dt * 3.5 * recenterFactor);
+        this.controls.target.lerp(this.originVec, recenterAlpha);
+      }
+
+      const altNorm = THREE.MathUtils.clamp(
+        (camRadius - (GLOBE_RADIUS + 1.2)) / 22.0,
+        0,
+        1
+      );
+      const desiredFov = THREE.MathUtils.lerp(46, 42, altNorm);
+      if (Math.abs(this.camera.fov - desiredFov) > 0.02) {
+        this.camera.fov = THREE.MathUtils.lerp(
+          this.camera.fov,
+          desiredFov,
+          Math.min(1, dt * 6)
+        );
+        this.camera.updateProjectionMatrix();
+      }
     }
+
+    const camRadius = this.camera.position.length();
+    const altNorm = THREE.MathUtils.clamp(
+      (camRadius - (GLOBE_RADIUS + 1.0)) / 24.0,
+      0,
+      1
+    );
+    this.controls.rotateSpeed = THREE.MathUtils.lerp(0.24, 0.72, altNorm);
+    this.controls.zoomSpeed = THREE.MathUtils.lerp(0.45, 0.95, altNorm);
+    this.controls.autoRotateSpeed = THREE.MathUtils.lerp(0.16, 0.45, altNorm);
+    this.controls.minDistance = Math.max(1.35, 10.65 - this.controls.target.length());
+    this.controls.maxDistance = Math.max(
+      24,
+      42 - this.controls.target.length() * 0.4
+    );
 
     const pulseTime = now * 0.004;
     for (const [, vis] of this.cableVisuals) {
@@ -1517,6 +1643,10 @@ export class GlobeScene {
     }
 
     this.controls.update();
+    const minWorldRadius = GLOBE_RADIUS + 0.45;
+    if (this.camera.position.lengthSq() < minWorldRadius * minWorldRadius) {
+      this.camera.position.setLength(minWorldRadius);
+    }
     this.renderer.render(this.scene, this.camera);
     this.emitProjectedMarkers();
   };

@@ -4,6 +4,19 @@ import type { CableRuntimeState, SubseaCable } from '../types/network';
 
 export type SubseaCameraMode = 'orbit' | 'rov-pov' | 'anatomy';
 
+interface SubseaCameraTransition {
+  targetMode: SubseaCameraMode;
+  fromPos: THREE.Vector3;
+  fromQuat: THREE.Quaternion;
+  fromTarget: THREE.Vector3;
+  fromFov: number;
+  toPos: THREE.Vector3;
+  toTarget: THREE.Vector3;
+  toFov: number;
+  elapsed: number;
+  duration: number;
+}
+
 export class SubseaRovScene {
   private container: HTMLElement;
   private scene: THREE.Scene;
@@ -59,6 +72,19 @@ export class SubseaRovScene {
   private animFrameId = 0;
   private lastTime = performance.now();
 
+  private cameraTransition: SubseaCameraTransition | null = null;
+  private rovInitialized = false;
+  private readonly rovTargetPos = new THREE.Vector3(0.65, 2.05, 0);
+  private readonly rovPrevPos = new THREE.Vector3(0.65, 2.05, 0);
+  private readonly rovVelocity = new THREE.Vector3();
+  private readonly rovLookTarget = new THREE.Vector3(0, -0.15, 0);
+  private readonly rovDesiredFocus = new THREE.Vector3(0, -0.15, 0);
+  private readonly rovNoseWorld = new THREE.Vector3();
+  private readonly lookAtMatrix = new THREE.Matrix4();
+  private readonly scratchQuat = new THREE.Quaternion();
+  private readonly scratchDelta = new THREE.Vector3();
+  private readonly worldUp = new THREE.Vector3(0, 1, 0);
+
   constructor(container: HTMLElement) {
     this.container = container;
     this.reducedMotion = window.matchMedia(
@@ -98,6 +124,15 @@ export class SubseaRovScene {
     this.controls.maxPolarAngle = Math.PI * 0.485;
     this.controls.minDistance = 1.6;
     this.controls.maxDistance = 20;
+    this.controls.rotateSpeed = 0.65;
+    this.controls.zoomSpeed = 0.85;
+
+    this.renderer.domElement.addEventListener('pointerdown', () => {
+      if (this.cameraTransition && this.cameraTransition.targetMode !== 'rov-pov') {
+        this.cameraTransition = null;
+        this.controls.enabled = true;
+      }
+    });
 
     this.setupLighting();
     this.buildSeabedWithCaustics();
@@ -107,6 +142,8 @@ export class SubseaRovScene {
     this.buildSeveredCableWithHelicalArmor();
     this.buildRealisticHazards();
     this.buildWorkClassRov();
+    this.rovGroup.position.copy(this.rovTargetPos);
+    this.rovNoseWorld.set(0, -0.12, 0.72).add(this.rovTargetPos);
 
     this.scene.add(this.intactGroup);
     this.scene.add(this.anatomyGroup);
@@ -129,21 +166,66 @@ export class SubseaRovScene {
   }
 
   public setCameraMode(mode: SubseaCameraMode): void {
+    const prevMode = this.cameraMode;
     this.cameraMode = mode;
+
+    const fromPos = this.activeCamera.position.clone();
+    const fromQuat = this.activeCamera.quaternion.clone();
+    const fromTarget =
+      prevMode === 'rov-pov'
+        ? this.rovLookTarget.clone()
+        : this.controls.target.clone();
+    const fromFov = this.activeCamera.fov;
+
+    let toPos: THREE.Vector3;
+    let toTarget: THREE.Vector3;
+    let toFov: number;
+
     if (mode === 'rov-pov') {
       this.activeCamera = this.rovPovCamera;
       this.controls.enabled = false;
+      this.rovPovCamera.position.copy(fromPos);
+      this.rovPovCamera.quaternion.copy(fromQuat);
+      this.rovPovCamera.fov = fromFov;
+      this.rovPovCamera.updateProjectionMatrix();
+
+      toPos = this.rovNoseWorld.clone();
+      toTarget = this.rovLookTarget.clone();
+      toFov = this.currentState?.cutState === 'repairing' ? 53 : 58;
     } else {
       this.activeCamera = this.orbitCamera;
-      this.controls.enabled = true;
+      this.controls.enabled = false;
+      this.orbitCamera.position.copy(fromPos);
+      this.orbitCamera.quaternion.copy(fromQuat);
+      this.orbitCamera.fov = fromFov;
+      this.orbitCamera.updateProjectionMatrix();
+
       if (mode === 'anatomy') {
-        this.orbitCamera.position.set(0.4, 1.15, 3.1);
-        this.controls.target.set(0, 0.05, 0);
+        toPos = new THREE.Vector3(0.4, 1.15, 3.1);
+        toTarget = new THREE.Vector3(0, 0.05, 0);
+        toFov = 42;
         this.setAnatomyPeel(1);
       } else {
+        toPos = new THREE.Vector3(1.4, 2.8, 7.6);
+        toTarget = new THREE.Vector3(0, 0.15, 0);
+        toFov = 44;
         this.setAnatomyPeel(0);
       }
     }
+
+    this.cameraTransition = {
+      targetMode: mode,
+      fromPos,
+      fromQuat,
+      fromTarget,
+      fromFov,
+      toPos,
+      toTarget,
+      toFov,
+      elapsed: 0,
+      duration: this.reducedMotion ? 0.18 : 0.88,
+    };
+
     this.syncVisibility();
   }
 
@@ -1024,28 +1106,78 @@ export class SubseaRovScene {
         }
       }
 
-      // ROV hovering, manipulator articulation, thrusters, and ROV POV camera
+      // ROV hovering, hydrodynamic thruster banking, manipulator articulation, and gimbal tracking
       if (this.rovGroup.visible) {
+        const t = now * 0.001;
         const cutState = this.currentState?.cutState ?? 'active';
-        let hoverY = 2.05 + Math.sin(now * 0.0022) * 0.12;
-        let patrolX = Math.cos(now * 0.0011) * 0.65;
-        let patrolZ = Math.sin(now * 0.0009) * 0.32;
+        let hoverY = 2.05 + Math.sin(t * 2.1) * 0.1 + Math.sin(t * 0.85) * 0.05;
+        let patrolX = Math.cos(t * 1.05) * 0.56 + Math.sin(t * 0.43) * 0.16;
+        let patrolZ = Math.sin(t * 0.88) * 0.28 + Math.cos(t * 0.37) * 0.1;
 
         if (cutState === 'repairing') {
           const prog = this.currentState?.repairProgress ?? 0.5;
           hoverY =
             prog < 0.3
               ? THREE.MathUtils.lerp(4.8, 1.38, prog / 0.3)
-              : 1.38 + Math.sin(now * 0.0026) * 0.08;
-          patrolX = Math.cos(now * 0.0016) * 0.16;
-          patrolZ = Math.sin(now * 0.0012) * 0.12;
+              : 1.38 + Math.sin(t * 2.5) * 0.065 + Math.cos(t * 1.1) * 0.03;
+          patrolX = Math.cos(t * 1.45) * 0.14 + Math.sin(t * 0.6) * 0.04;
+          patrolZ = Math.sin(t * 1.15) * 0.1 + Math.cos(t * 0.5) * 0.03;
         } else if (cutState === 'severed') {
-          hoverY = 2.35 + Math.sin(now * 0.0025) * 0.12;
-          patrolX = Math.cos(now * 0.0014) * 0.42;
-          patrolZ = Math.sin(now * 0.0011) * 0.25;
+          hoverY = 2.35 + Math.sin(t * 2.3) * 0.1 + Math.cos(t * 0.9) * 0.05;
+          patrolX = Math.cos(t * 1.25) * 0.4 + Math.sin(t * 0.55) * 0.12;
+          patrolZ = Math.sin(t * 0.98) * 0.22 + Math.cos(t * 0.42) * 0.08;
         }
 
-        this.rovGroup.position.set(patrolX, hoverY, patrolZ);
+        this.rovTargetPos.set(patrolX, hoverY, patrolZ);
+        if (!this.rovInitialized) {
+          this.rovGroup.position.copy(this.rovTargetPos);
+          this.rovPrevPos.copy(this.rovTargetPos);
+          this.rovInitialized = true;
+        } else {
+          this.rovPrevPos.copy(this.rovGroup.position);
+          const posAlpha = 1 - Math.exp(-dt * 4.2);
+          this.rovGroup.position.lerp(this.rovTargetPos, posAlpha);
+        }
+
+        const safeDt = Math.max(dt, 0.001);
+        const velAlpha = 1 - Math.exp(-dt * 5.0);
+        this.scratchDelta
+          .subVectors(this.rovGroup.position, this.rovPrevPos)
+          .divideScalar(safeDt);
+        this.rovVelocity.lerp(this.scratchDelta, velAlpha);
+
+        // Hydrodynamic pitch/roll bank into lateral thrust + subtle yaw toward splice center
+        const targetRoll = THREE.MathUtils.clamp(
+          -this.rovVelocity.x * 0.14 + Math.sin(t * 0.72) * 0.025,
+          -0.18,
+          0.18
+        );
+        const targetPitch = THREE.MathUtils.clamp(
+          this.rovVelocity.z * 0.16 + Math.cos(t * 0.64) * 0.02,
+          -0.16,
+          0.16
+        );
+        const targetYaw = THREE.MathUtils.clamp(
+          -this.rovGroup.position.x * 0.14 - this.rovVelocity.x * 0.08,
+          -0.26,
+          0.26
+        );
+        const attAlpha = 1 - Math.exp(-dt * 4.5);
+        this.rovGroup.rotation.z = THREE.MathUtils.lerp(
+          this.rovGroup.rotation.z,
+          targetRoll,
+          attAlpha
+        );
+        this.rovGroup.rotation.x = THREE.MathUtils.lerp(
+          this.rovGroup.rotation.x,
+          targetPitch,
+          attAlpha
+        );
+        this.rovGroup.rotation.y = THREE.MathUtils.lerp(
+          this.rovGroup.rotation.y,
+          targetYaw,
+          attAlpha
+        );
 
         this.rovLeftClaw.rotation.z = Math.sin(now * 0.003) * 0.16;
         this.rovRightClaw.rotation.z = -Math.sin(now * 0.003) * 0.16;
@@ -1062,15 +1194,99 @@ export class SubseaRovScene {
       }
     }
 
-    // Update ROV Nose-Cam POV position & look target
-    this.rovPovCamera.position.set(
-      this.rovGroup.position.x,
-      this.rovGroup.position.y - 0.12,
-      this.rovGroup.position.z + 0.72
-    );
-    this.rovPovCamera.lookAt(0, -0.15, 0);
+    // Update ROV Nose-Cam mount in world space & spring-damped optical gimbal look target
+    this.rovGroup.updateMatrixWorld();
+    this.rovNoseWorld.set(0, -0.12, 0.72);
+    this.rovGroup.localToWorld(this.rovNoseWorld);
+
+    const tSec = now * 0.001;
+    const isRepairing = this.currentState?.cutState === 'repairing';
+    if (this.motionPaused || this.reducedMotion || isRepairing) {
+      this.rovDesiredFocus.set(0, isRepairing ? -0.18 : -0.15, 0);
+    } else {
+      this.rovDesiredFocus.set(
+        Math.sin(tSec * 0.52) * 0.34,
+        -0.15 + Math.cos(tSec * 0.41) * 0.05,
+        Math.cos(tSec * 0.36) * 0.08
+      );
+    }
+    const gimbalAlpha = this.reducedMotion ? 1 : 1 - Math.exp(-dt * 4.2);
+    this.rovLookTarget.lerp(this.rovDesiredFocus, gimbalAlpha);
+
+    const desiredRovFov = isRepairing ? 53 : 58;
+    if (this.cameraTransition) {
+      const tr = this.cameraTransition;
+      tr.elapsed = Math.min(tr.duration, tr.elapsed + dt);
+      const rawT = tr.duration > 0 ? tr.elapsed / tr.duration : 1;
+      const eased = rawT * rawT * rawT * (rawT * (rawT * 6 - 15) + 10);
+
+      if (tr.targetMode === 'rov-pov') {
+        this.rovPovCamera.position.lerpVectors(
+          tr.fromPos,
+          this.rovNoseWorld,
+          eased
+        );
+        this.lookAtMatrix.lookAt(
+          this.rovNoseWorld,
+          this.rovLookTarget,
+          this.worldUp
+        );
+        this.scratchQuat.setFromRotationMatrix(this.lookAtMatrix);
+        this.rovPovCamera.quaternion.slerpQuaternions(
+          tr.fromQuat,
+          this.scratchQuat,
+          eased
+        );
+        const nextFov = THREE.MathUtils.lerp(tr.fromFov, desiredRovFov, eased);
+        if (Math.abs(this.rovPovCamera.fov - nextFov) > 0.01) {
+          this.rovPovCamera.fov = nextFov;
+          this.rovPovCamera.updateProjectionMatrix();
+        }
+      } else {
+        this.orbitCamera.position.lerpVectors(tr.fromPos, tr.toPos, eased);
+        this.controls.target.lerpVectors(tr.fromTarget, tr.toTarget, eased);
+        this.lookAtMatrix.lookAt(tr.toPos, tr.toTarget, this.worldUp);
+        this.scratchQuat.setFromRotationMatrix(this.lookAtMatrix);
+        this.orbitCamera.quaternion.slerpQuaternions(
+          tr.fromQuat,
+          this.scratchQuat,
+          eased
+        );
+        const nextFov = THREE.MathUtils.lerp(tr.fromFov, tr.toFov, eased);
+        if (Math.abs(this.orbitCamera.fov - nextFov) > 0.01) {
+          this.orbitCamera.fov = nextFov;
+          this.orbitCamera.updateProjectionMatrix();
+        }
+      }
+
+      if (rawT >= 1) {
+        if (tr.targetMode !== 'rov-pov') {
+          this.controls.target.copy(tr.toTarget);
+          this.controls.enabled = true;
+          this.controls.update();
+        }
+        this.cameraTransition = null;
+      }
+    } else {
+      this.rovPovCamera.position.copy(this.rovNoseWorld);
+      this.rovPovCamera.lookAt(this.rovLookTarget);
+      if (Math.abs(this.rovPovCamera.fov - desiredRovFov) > 0.02) {
+        this.rovPovCamera.fov = THREE.MathUtils.lerp(
+          this.rovPovCamera.fov,
+          desiredRovFov,
+          Math.min(1, dt * 4)
+        );
+        this.rovPovCamera.updateProjectionMatrix();
+      }
+    }
 
     if (this.controls.enabled) {
+      const orbitDist = this.orbitCamera.position.distanceTo(
+        this.controls.target
+      );
+      const zoomNorm = THREE.MathUtils.clamp((orbitDist - 1.6) / 14.0, 0, 1);
+      this.controls.rotateSpeed = THREE.MathUtils.lerp(0.32, 0.68, zoomNorm);
+      this.controls.zoomSpeed = THREE.MathUtils.lerp(0.45, 0.9, zoomNorm);
       this.controls.update();
     }
     this.renderer.render(this.scene, this.activeCamera);
