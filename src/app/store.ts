@@ -177,3 +177,4 @@ export class SimulatorStore extends TypedEventEmitter<StoreEventMap> {
     this.emit('ui', undefined);
   }
 }
+

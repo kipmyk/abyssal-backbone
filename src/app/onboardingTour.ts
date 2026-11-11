@@ -115,3 +115,4 @@ export function setupOnboardingTour(deps: TourDependencies): void {
   // Keep viewport unobstructed by default; tour launches on demand from Guide dialog
   refs.onboardingBanner.hidden = true;
 }
+

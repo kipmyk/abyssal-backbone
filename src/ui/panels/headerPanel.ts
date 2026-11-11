@@ -56,3 +56,4 @@ export function mountHeaderPanel(store: SimulatorStore, refs: DomRefs): () => vo
 
   return render;
 }
+

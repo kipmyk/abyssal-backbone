@@ -258,3 +258,4 @@ export function mountCablesAndEventsPanel(
 
   return { renderCablesList, renderEventsLog, renderTooltip };
 }
+

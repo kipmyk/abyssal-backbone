@@ -532,3 +532,4 @@ export function registerEventHandlers(
     otdrResizeObserver.observe(refs.seabedOtdrCanvas.parentElement);
   }
 }
+

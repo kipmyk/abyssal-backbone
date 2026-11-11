@@ -77,3 +77,4 @@ export async function shareScenarioToUrl(
     refs.shareLabel.textContent = 'Share';
   }, 2200);
 }
+

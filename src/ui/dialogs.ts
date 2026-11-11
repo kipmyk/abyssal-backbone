@@ -204,3 +204,4 @@ export function initDialogsAndHints(
     renderGlossary,
   };
 }
+

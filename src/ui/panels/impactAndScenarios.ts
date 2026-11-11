@@ -195,3 +195,4 @@ export function mountImpactAndScenarios(
 
   return renderAll;
 }
+
