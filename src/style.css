@@ -444,7 +444,8 @@ li {
   display: none;
 }
 
-.app-shell.hud-collapsed .subsea-stage {
+.app-shell.hud-collapsed .subsea-stage,
+.app-shell.focus-mode .subsea-stage {
   inset-inline-start: 14px;
   inset-inline-end: 14px;
 }
@@ -1601,6 +1602,51 @@ li {
 
 .app-shell[data-density="simplified"] [data-simp-only="true"] {
   display: flex;
+}
+
+.eng-disclosure-bar {
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border-radius: 7px;
+  border: 1px dashed rgba(56, 189, 248, 0.34);
+  background: rgba(11, 22, 42, 0.72);
+  font-size: 0.73rem;
+  color: #a9bedb;
+}
+
+/* Fault-active progressive prioritization */
+.app-shell[data-fault-active="true"] .impact-card {
+  border-color: rgba(244, 63, 94, 0.55);
+  border-inline-start: 3px solid #f43f5e;
+  box-shadow: 0 8px 24px rgba(2, 6, 17, 0.55);
+}
+
+.app-shell[data-fault-active="true"] .how-to-details,
+.app-shell[data-fault-active="true"] .cable-card.active,
+.app-shell[data-fault-active="true"] .corridor-row.is-unchanged {
+  opacity: 0.78;
+  transition: opacity 0.16s ease;
+}
+
+.app-shell[data-fault-active="true"] .how-to-details:hover,
+.app-shell[data-fault-active="true"] .how-to-details:focus-within,
+.app-shell[data-fault-active="true"] .cable-card.active:hover,
+.app-shell[data-fault-active="true"] .cable-card.active:focus-within,
+.app-shell[data-fault-active="true"] .corridor-row.is-unchanged:hover,
+.app-shell[data-fault-active="true"] .corridor-row.is-unchanged:focus-within {
+  opacity: 1;
+}
+
+.corridor-row.is-impacted td:first-child,
+.corridor-row.is-impacted th:first-child {
+  border-inline-start: 2px solid #f59e0b;
+}
+
+.corridor-row.is-impacted {
+  background: rgba(245, 158, 11, 0.08);
 }
 
 .kpi-pill-wide,

@@ -12,7 +12,7 @@
   <body>
     <a href="#main-sim" class="skip-link visually-hidden">Skip to simulation controls</a>
 
-    <div id="app" class="app-shell" data-view-mode="split" data-density="engineering">
+    <div id="app" class="app-shell" data-view-mode="split" data-density="simplified" data-fault-active="false">
       <header class="top-bar">
         <div class="brand-cluster">
           <div class="brand-mark" aria-hidden="true">
@@ -42,7 +42,7 @@
             <span class="kpi-label">Faulted Trunks</span>
             <span id="kpi-severed" class="kpi-value">0</span>
           </div>
-          <div class="kpi-item" data-eng-only="true">
+          <div class="kpi-item">
             <span class="kpi-label">Impacted BGP Flows</span>
             <span id="kpi-rerouted" class="kpi-value">0</span>
           </div>
@@ -66,10 +66,10 @@
           </div>
 
           <div class="view-mode-group density-group" role="group" aria-label="Telemetry display density">
-            <button type="button" id="btn-density-simplified" class="view-mode-btn" data-density-mode="simplified" aria-pressed="false">
+            <button type="button" id="btn-density-simplified" class="view-mode-btn active" data-density-mode="simplified" aria-pressed="true">
               Simplified
             </button>
-            <button type="button" id="btn-density-engineering" class="view-mode-btn active" data-density-mode="engineering" aria-pressed="true">
+            <button type="button" id="btn-density-engineering" class="view-mode-btn" data-density-mode="engineering" aria-pressed="false">
               Engineering
             </button>
           </div>
@@ -318,7 +318,20 @@
             </div>
 
             <div id="bgp-rib-box" class="trace-chain" data-eng-only="true" aria-live="polite"></div>
-            <div id="trace-hops-chain" class="trace-chain"></div>
+            <div class="trace-chain-row">
+              <div class="label-with-tip" style="margin-bottom: 4px;">
+                <span class="meta-label">Active AS_PATH &amp; Optical Path</span>
+                <button
+                  type="button"
+                  class="toggletip-btn"
+                  popovertarget="hint-aspath"
+                  popovertargetaction="show"
+                  aria-label="Explain AS_PATH and valley-free routing"
+                >?</button>
+                <div id="hint-aspath" popover="hint" class="term-popover"></div>
+              </div>
+              <div id="trace-hops-chain" class="trace-chain"></div>
+            </div>
           </section>
 
           <section class="panel-section">
@@ -348,6 +361,10 @@
               <p id="hist-source" class="historical-source"></p>
             </div>
             <div id="scenario-list" class="scenario-grid"></div>
+            <div class="eng-disclosure-bar" data-simp-only="true">
+              <span>Showing 4 primary incidents.</span>
+              <button type="button" class="mini-pill" data-show-engineering="true">Show engineering details</button>
+            </div>
           </section>
 
           <section class="panel-section" data-eng-only="true">
@@ -424,7 +441,7 @@
               <button type="button" role="tab" id="tab-corridors" aria-selected="false" tabindex="-1">BGP Corridors</button>
               <button type="button" role="tab" id="tab-repair" aria-selected="false" tabindex="-1">Repair Ops</button>
               <button type="button" role="tab" id="tab-cables" aria-selected="false" tabindex="-1">Trunks</button>
-              <button type="button" role="tab" id="tab-events" aria-selected="false" tabindex="-1">Event Log</button>
+              <button type="button" role="tab" id="tab-events" aria-selected="false" tabindex="-1" data-eng-only="true">Event Log</button>
             </div>
 
             <!-- TAB 1: OPTICAL, PFE & C-OTDR INSTRUMENT (Default Active for immediate technical inspection) -->
@@ -435,7 +452,7 @@
                     <label for="otdr-cable-select">Inspected Subsea System</label>
                     <div class="header-inline-tools">
                       <button type="button" id="btn-about-cable" class="mini-pill">About System</button>
-                      <span id="otdr-provenance-badge" class="micro-badge">VERIFIED · ITU-T G.977</span>
+                      <span id="otdr-provenance-badge" class="micro-badge" data-eng-only="true">VERIFIED · ITU-T G.977</span>
                     </div>
                   </div>
                   <select id="otdr-cable-select" class="hud-select"></select>
@@ -448,7 +465,17 @@
                     <span id="opt-fiber-val" class="mono-val">--</span>
                   </div>
                   <div class="trace-metric-cell" data-eng-only="true">
-                    <span class="meta-label">Span Loss / EDFA Gain</span>
+                    <div class="label-with-tip">
+                      <span class="meta-label">Span Loss / EDFA Gain</span>
+                      <button
+                        type="button"
+                        class="toggletip-btn"
+                        popovertarget="hint-edfa"
+                        popovertargetaction="show"
+                        aria-label="Explain EDFA Repeaters and Span Loss"
+                      >?</button>
+                      <div id="hint-edfa" popover="hint" class="term-popover"></div>
+                    </div>
                     <span id="opt-span-val" class="mono-val">--</span>
                   </div>
                   <div class="trace-metric-cell">
@@ -510,23 +537,38 @@
                     <span id="pfe-current-val" class="mono-val">--</span>
                   </div>
                   <div class="trace-metric-cell">
-                    <span class="meta-label">Localization / Uncertainty</span>
+                    <div class="label-with-tip">
+                      <span class="meta-label">Localization / C-OTDR</span>
+                      <button
+                        type="button"
+                        class="toggletip-btn"
+                        popovertarget="hint-cotdr"
+                        popovertargetaction="show"
+                        aria-label="Explain C-OTDR Fault Localization"
+                      >?</button>
+                      <div id="hint-cotdr" popover="hint" class="term-popover"></div>
+                    </div>
                     <span id="otdr-depth" class="mono-val">NOMINAL</span>
                   </div>
                 </div>
 
-                <div class="otdr-canvas-wrap">
+                <div class="otdr-canvas-wrap" data-eng-only="true">
                   <canvas id="seabed-otdr-canvas" class="seabed-otdr-canvas"></canvas>
                 </div>
 
-                <div id="otdr-notes-box" class="trace-chain"></div>
+                <div id="otdr-notes-box" class="trace-chain" data-eng-only="true"></div>
 
                 <div class="otdr-actions">
                   <button type="button" id="btn-dive-cable" class="btn-ghost" style="flex:1;">Center Globe on Cable</button>
                   <button type="button" id="btn-otdr-action" class="cable-action-btn cut">Inject Fault</button>
                 </div>
 
-                <details class="assumptions-details">
+                <div class="eng-disclosure-bar" data-simp-only="true">
+                  <span>C-OTDR waveform, PFE HVDC telemetry &amp; Event Log collapsed.</span>
+                  <button type="button" class="mini-pill" data-show-engineering="true">Show engineering details</button>
+                </div>
+
+                <details class="assumptions-details" data-eng-only="true">
                   <summary>Model Assumptions &amp; Educational Notice</summary>
                   <div id="inline-assumptions-body" class="assumptions-body"></div>
                 </details>
@@ -595,7 +637,7 @@
             </div>
 
             <!-- TAB 5: TELECOMMUNICATIONS EVENT LOG -->
-            <div role="tabpanel" id="panel-events" aria-labelledby="tab-events" class="tab-panel" hidden="until-found">
+            <div role="tabpanel" id="panel-events" aria-labelledby="tab-events" class="tab-panel" hidden="until-found" data-eng-only="true">
               <div class="panel-inner">
                 <div id="events-filter-bar" class="events-filter-bar" role="group" aria-label="Filter event log by subsystem">
                   <button type="button" class="mini-pill active" data-evt-filter="All" aria-pressed="true">All</button>

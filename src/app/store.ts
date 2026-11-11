@@ -71,7 +71,7 @@ export class SimulatorStore extends TypedEventEmitter<StoreEventMap> {
 
   motionPaused = false;
   clickMode: ClickMode = 'inspect';
-  densityMode: DensityMode = 'engineering';
+  densityMode: DensityMode = 'simplified';
   highContrastMode = false;
   focusMode = false;
   viewMode: ViewMode = 'split';

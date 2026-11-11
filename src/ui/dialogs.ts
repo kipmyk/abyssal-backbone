@@ -21,6 +21,9 @@ function populateTermHints(): void {
     'hint-gsnr': 'gsnr',
     'hint-qfactor': 'qfactor',
     'hint-pfe': 'pfe',
+    'hint-edfa': 'edfa',
+    'hint-cotdr': 'cotdr',
+    'hint-aspath': 'aspath',
   };
   for (const [elId, hintKey] of Object.entries(hintMap)) {
     const el = document.getElementById(elId);

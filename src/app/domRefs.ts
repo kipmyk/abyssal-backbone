@@ -26,6 +26,7 @@ export interface DomRefs {
 
   btnDensitySimplified: HTMLButtonElement;
   btnDensityEngineering: HTMLButtonElement;
+  showEngButtons: HTMLButtonElement[];
   btnGuide: HTMLButtonElement;
   btnShareScenario: HTMLButtonElement;
   shareLabel: HTMLElement;
@@ -170,6 +171,9 @@ export function getDomRefs(): DomRefs {
 
     btnDensitySimplified: byId<HTMLButtonElement>('btn-density-simplified'),
     btnDensityEngineering: byId<HTMLButtonElement>('btn-density-engineering'),
+    showEngButtons: Array.from(
+      document.querySelectorAll<HTMLButtonElement>('[data-show-engineering]')
+    ),
     btnGuide: byId<HTMLButtonElement>('btn-guide'),
     btnShareScenario: byId<HTMLButtonElement>('btn-share-scenario'),
     shareLabel: byId('share-label'),

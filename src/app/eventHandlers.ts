@@ -88,6 +88,14 @@ export function createUiAppliers(
       'aria-pressed',
       String(mode === 'engineering')
     );
+    if (mode === 'simplified') {
+      const eventsTab = document.getElementById('tab-events');
+      if (eventsTab?.getAttribute('aria-selected') === 'true') {
+        document.getElementById('tab-seabed')?.click();
+      }
+    } else {
+      requestAnimationFrame(() => store.emit('selection', undefined));
+    }
     announce(`Telemetry density set to ${mode} mode.`);
   };
 
@@ -322,6 +330,14 @@ export function registerEventHandlers(
   refs.btnDensityEngineering.addEventListener('click', () =>
     appliers.applyDensityMode('engineering')
   );
+  refs.showEngButtons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      appliers.applyDensityMode('engineering');
+      if (btn.closest('#panel-seabed')) {
+        requestAnimationFrame(() => renderSeabedOtdrPanel());
+      }
+    });
+  });
 
   refs.btnGuide.addEventListener('click', () => dialogs.openGuideDialog());
   refs.glossaryFilterInput.addEventListener('input', () =>

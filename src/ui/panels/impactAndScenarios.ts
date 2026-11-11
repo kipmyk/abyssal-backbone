@@ -11,12 +11,22 @@ export function mountImpactAndScenarios(
   globe: GlobeScene,
   announce: (msg: string) => void
 ): () => void {
+  const PRIMARY_SCENARIO_IDS = new Set([
+    'red-sea-blackout',
+    'luzon-typhoon',
+    'med-anchor-drag',
+    'atlantic-storm',
+  ]);
+
   // Build curated fault & historical scenario preset cards once
   for (const preset of SCENARIO_PRESETS) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'scenario-btn';
     btn.dataset.scenarioId = preset.id;
+    if (!PRIMARY_SCENARIO_IDS.has(preset.id)) {
+      btn.dataset.engOnly = 'true';
+    }
     btn.innerHTML = `
       <span class="scenario-title">[${escapeHtml(preset.category)}] ${escapeHtml(preset.name)}</span>
       <span class="scenario-desc">${escapeHtml(preset.subtitle)}</span>
@@ -96,6 +106,7 @@ export function mountImpactAndScenarios(
       store.baselineSnapshot,
       store.currentSnapshot
     );
+    refs.appShell.dataset.faultActive = String(report.hasChanges);
     if (!report.hasChanges) {
       refs.impactComparisonCard.hidden = true;
       return;

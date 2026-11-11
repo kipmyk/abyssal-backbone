@@ -113,6 +113,18 @@ export const INLINE_TERM_HINTS: Record<string, { title: string; body: string }> 
     title: 'RFC 4271 BGP-4 Decision Order',
     body: 'Selects best path strictly by Highest LOCAL_PREF -> Shortest AS_PATH -> Lowest ORIGIN -> Lowest MED -> eBGP over iBGP -> Shortest IGP RTT.',
   },
+  edfa: {
+    title: 'EDFA Repeaters & Span Loss',
+    body: 'Undersea optical amplifiers placed every 65-95 km compensate fiber attenuation (~0.155-0.195 dB/km) while adding Amplified Spontaneous Emission (ASE) noise.',
+  },
+  cotdr: {
+    title: 'C-OTDR Fault Localization',
+    body: 'Coherent Optical Time-Domain Reflectometry measures backscatter through repeater loopbacks to estimate subsea fault distance (+/- 0.2 to 3.7 km).',
+  },
+  aspath: {
+    title: 'AS_PATH & Valley-Free Policy',
+    body: 'Tracks traversed Autonomous Systems to prevent loops. Exporting a provider route back to another provider breaks valley-free routing and causes leaks.',
+  },
 };
 
 export interface ModelAssumptionGroup {

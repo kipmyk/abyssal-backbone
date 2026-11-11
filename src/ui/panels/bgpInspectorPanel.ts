@@ -81,9 +81,10 @@ export function mountBgpInspectorPanel(
     refs.corridorsTbody.innerHTML = '';
     for (const c of store.currentSnapshot.corridors) {
       const tr = document.createElement('tr');
+      const isImpacted = c.status !== 'OPTIMAL';
       tr.className = `corridor-row ${
-        store.selectedCorridorId === c.id ? 'selected' : ''
-      }`;
+        isImpacted ? 'is-impacted' : 'is-unchanged'
+      } ${store.selectedCorridorId === c.id ? 'selected' : ''}`;
       tr.tabIndex = 0;
 
       const delta = c.currentRttMs - c.baselineRttMs;
