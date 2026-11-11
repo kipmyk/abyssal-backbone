@@ -14,6 +14,7 @@ import {
 import type {
   CableRuntimeState,
   CorridorStatus,
+  EventSubsystem,
   FaultCause,
   NetworkEvent,
   NetworkSnapshot,
@@ -53,6 +54,7 @@ export class RoutingEngine {
   >();
   private events: NetworkEvent[] = [];
   private eventSeq = 1;
+  private faultClockOriginMs: number | null = null;
   private customSrcId: string | null = 'mombasa';
   private customDstId: string | null = 'marseille';
   private selectedFaultCause: FaultCause | 'Auto' = 'Auto';
@@ -77,7 +79,8 @@ export class RoutingEngine {
     this.pushEvent(
       'info',
       'BGP-CONVERGED',
-      `RFC 4271 BGP-4 RIBs converged across ${LANDING_STATIONS.length} AS border routers and ${SUBSEA_CABLES.length} optical trunks.`
+      `RFC 4271 BGP-4 RIBs converged across ${LANDING_STATIONS.length} AS border routers and ${SUBSEA_CABLES.length} optical trunks.`,
+      'BGP'
     );
   }
 
@@ -195,14 +198,25 @@ export class RoutingEngine {
     return { srcId: this.customSrcId, dstId: this.customDstId };
   }
 
+  private formatRelativeTime(): string {
+    if (this.faultClockOriginMs === null) return 'BASELINE';
+    const sec = Math.max(0, Math.floor((Date.now() - this.faultClockOriginMs) / 1000));
+    const mm = String(Math.floor(sec / 60)).padStart(2, '0');
+    const ss = String(sec % 60).padStart(2, '0');
+    return `T+${mm}:${ss}`;
+  }
+
   private pushEvent(
     severity: NetworkEvent['severity'],
     code: string,
-    message: string
+    message: string,
+    subsystem: EventSubsystem = 'System'
   ): void {
     this.events.unshift({
       id: `evt-${this.eventSeq++}`,
       timestamp: nowTimestamp(),
+      relativeTime: this.formatRelativeTime(),
+      subsystem,
       severity,
       code,
       message,
@@ -246,6 +260,10 @@ export class RoutingEngine {
         ? 'single-pfe-outage'
         : 'complete-cut');
 
+    if (this.faultClockOriginMs === null) {
+      this.faultClockOriginMs = Date.now();
+    }
+
     const nextState = this.buildCableState(
       cable,
       faultMode,
@@ -259,13 +277,17 @@ export class RoutingEngine {
       this.pushEvent(
         'critical',
         'OPT-LINK-DOWN',
-        `${cable.systemCode}: Cable fault detected (${cause}) at est. ${nextState.faultDistanceKm} km (±${nextState.faultUncertaintyKm} km, ${Math.abs(depthM)}m depth). Optical link unavailable; BGP routes withdrawn.`
+        `${cable.systemCode}: Cable fault detected (${cause}) at est. ${nextState.faultDistanceKm} km (±${nextState.faultUncertaintyKm} km, ${Math.abs(depthM)}m depth). Optical link unavailable; BGP routes withdrawn.`,
+        'Optical'
       );
     } else {
+      const sub: EventSubsystem =
+        faultMode === 'repeater-failure' ? 'Optical' : 'PFE';
       this.pushEvent(
         'warning',
-        'PFE-RECONFIG',
-        `${cable.systemCode}: ${cause} at est. ${nextState.faultDistanceKm} km (±${nextState.faultUncertaintyKm} km). PFE reconfigured (${nextState.pfe.mode}); optical carrier remains UP (Q=${nextState.optical.qFactorDb} dB, GSNR=${nextState.osnrDb} dB).`
+        sub === 'Optical' ? 'OPT-REPEATER-DEG' : 'PFE-RECONFIG',
+        `${cable.systemCode}: ${cause} at est. ${nextState.faultDistanceKm} km (±${nextState.faultUncertaintyKm} km). PFE reconfigured (${nextState.pfe.mode}); optical carrier remains UP (Q=${nextState.optical.qFactorDb} dB, GSNR=${nextState.osnrDb} dB).`,
+        sub
       );
     }
     return true;
@@ -295,7 +317,8 @@ export class RoutingEngine {
     this.pushEvent(
       'warning',
       'VESSEL-MOBILIZED',
-      `${plan.vessel.name} (${plan.vessel.depotCity}) mobilized for ${cable.systemCode} (${plan.transitDistanceNm} NM transit, ${plan.waterDepthM}m depth, ${plan.recoveryMethod}, ETR ${plan.totalEstimatedHours}h).`
+      `${plan.vessel.name} (${plan.vessel.depotCity}) mobilized for ${cable.systemCode} (${plan.transitDistanceNm} NM transit, ${plan.waterDepthM}m depth, ${plan.recoveryMethod}, ETR ${plan.totalEstimatedHours}h).`,
+      'Repair'
     );
     return true;
   }
@@ -314,7 +337,8 @@ export class RoutingEngine {
       this.pushEvent(
         'recovery',
         'SERVICE-RESTORED',
-        `${cable.systemCode}: Splice testing & PFE ±${restoredState.pfeVoltageKv} kV ramp complete. GSNR ${restoredState.osnrDb} dB (Q=${restoredState.optical.qFactorDb} dB); BGP adjacency restored.`
+        `${cable.systemCode}: Splice testing & PFE ±${restoredState.pfeVoltageKv} kV ramp complete. GSNR ${restoredState.osnrDb} dB (Q=${restoredState.optical.qFactorDb} dB); BGP adjacency restored.`,
+        'Optical'
       );
     }
     return true;
@@ -329,8 +353,10 @@ export class RoutingEngine {
     this.pushEvent(
       'recovery',
       'BASELINE-RESTORED',
-      `Restored deterministic baseline (${count} trunk(s) repaired, BGP policy filters & anomalies cleared).`
+      `Restored deterministic baseline (${count} trunk(s) repaired, BGP policy filters & anomalies cleared).`,
+      'System'
     );
+    this.faultClockOriginMs = null;
     return count;
   }
 
@@ -345,6 +371,7 @@ export class RoutingEngine {
     for (const [id] of this.runtime) {
       this.restoreCable(id, true);
     }
+    this.faultClockOriginMs = Date.now();
     let affected = 0;
     for (const id of cableIds) {
       if (this.severCable(id, undefined, 0.5, cause, subsystemFaultMode)) {
@@ -356,32 +383,37 @@ export class RoutingEngine {
       this.pushEvent(
         'critical',
         'BGP-ROUTE-LEAK',
-        `Scenario "${scenarioName}": AS37468 valley-free violation advertising transit prefixes with LOCAL_PREF 265 (0 physical cables cut).`
+        `Scenario "${scenarioName}": AS37468 valley-free violation advertising transit prefixes with LOCAL_PREF 265 (0 physical cables cut).`,
+        'BGP'
       );
     } else if (bgpConfig?.prefixHijackActive) {
       this.pushEvent(
         'critical',
         'BGP-HIJACK',
-        `Scenario "${scenarioName}": Unauthorized origin AS64666 advertising forged 1-hop AS_PATH for European prefixes.`
+        `Scenario "${scenarioName}": Unauthorized origin AS64666 advertising forged 1-hop AS_PATH for European prefixes.`,
+        'BGP'
       );
     } else if (bgpConfig?.enforceStrictCapeNoExport) {
       this.pushEvent(
         'critical',
         'BGP-POLICY-DROP',
-        `Scenario "${scenarioName}": Red Sea severed; physical Cape path is UP, but AS37457 NO_EXPORT policy blocks East-West transit.`
+        `Scenario "${scenarioName}": Red Sea severed; physical Cape path is UP, but AS37457 NO_EXPORT policy blocks East-West transit.`,
+        'BGP'
       );
     } else if (bgpConfig?.disabledStations?.size) {
       const stList = Array.from(bgpConfig.disabledStations).join(', ').toUpperCase();
       this.pushEvent(
         'critical',
         'CLS-OUTAGE',
-        `Scenario "${scenarioName}": Landing station facility power & border router outage at ${stList}.`
+        `Scenario "${scenarioName}": Landing station facility power & border router outage at ${stList}.`,
+        'BGP'
       );
     } else {
       this.pushEvent(
         'critical',
         'SCENARIO-ACTIVE',
-        `Scenario "${scenarioName}" applied (${affected} cable system(s) impacted; C-OTDR & BGP reconvergence complete).`
+        `Scenario "${scenarioName}" applied (${affected} cable system(s) impacted; C-OTDR & BGP reconvergence complete).`,
+        'BGP'
       );
     }
   }
@@ -419,7 +451,8 @@ export class RoutingEngine {
           this.pushEvent(
             'info',
             nextPlan.currentStep.code,
-            `${state.repairShip} [${cable.systemCode}]: ${nextPlan.currentStep.label} — ${nextPlan.currentStep.engineeringDetail}`
+            `${state.repairShip} [${cable.systemCode}]: ${nextPlan.currentStep.label} — ${nextPlan.currentStep.engineeringDetail}`,
+            nextPlan.currentStep.legacyPhase === 'pfe-ramp' ? 'PFE' : 'Repair'
           );
         }
 

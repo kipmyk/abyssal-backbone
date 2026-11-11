@@ -1316,7 +1316,7 @@ export const CORRIDOR_DEFINITIONS: Array<{
 export const SCENARIO_PRESETS: ScenarioPreset[] = [
   {
     id: 'red-sea-blackout',
-    name: 'Red Sea Multi-Cable Anchor Cut',
+    name: '2024 Red Sea Multi-Cable Anchor Cut',
     subtitle: 'Severs AAE-1, SMW5, 2Africa & Blue-Raman in Bab-el-Mandeb; East Africa reroutes via Cape',
     category: 'Physical Cut',
     cableIdsToCut: ['aae1-redsea', 'smw5-redsea', '2africa-redsea', 'jeddah-suez'],
@@ -1324,10 +1324,18 @@ export const SCENARIO_PRESETS: ScenarioPreset[] = [
     suggestedCorridorId: 'mba-mrs',
     cause: 'Anchor Drag',
     subsystemFaultMode: 'complete-cut',
+    historicalEvent: {
+      date: '2024-02-24',
+      factualSummary:
+        'Anchor drag from the abandoned bulk carrier MV Rubymar in shallow ~150-300m Bab-el-Mandeb waters damaged multiple Asia-Europe trunks including AAE-1, SEACOM/TGN-EA, and EIG.',
+      impactHighlight:
+        'Public reports estimated ~25% of Red Sea Europe-Asia traffic shifted onto Cape of Good Hope & Gulf terrestrial/transit detours.',
+      sourceNote: 'HGC Global Communications / ICPC / TeleGeography incident reports (Feb-Mar 2024)',
+    },
   },
   {
     id: 'luzon-typhoon',
-    name: 'Luzon Strait Seismic Landslide',
+    name: '2006 Luzon / Hengchun Seismic Slides',
     subtitle: 'Subduction turbidity current severs APG-Luzon & SJC-SG; traffic diverts via Guam',
     category: 'Physical Cut',
     cableIdsToCut: ['apg-luzon', 'sjc-luzon'],
@@ -1335,17 +1343,33 @@ export const SCENARIO_PRESETS: ScenarioPreset[] = [
     suggestedCorridorId: 'hk-la',
     cause: 'Turbidity Landslide',
     subsystemFaultMode: 'complete-cut',
+    historicalEvent: {
+      date: '2006-12-26',
+      factualSummary:
+        'A M7.0 earthquake south of Taiwan triggered submarine canyon turbidity currents over 350 km downslope in the Luzon Strait, sequentially breaking 8 submarine systems over 12+ hours.',
+      impactHighlight:
+        'Severe East Asia-US/Europe capacity crunch lasted weeks while 11 repair vessel dispatches spliced deep-water segments.',
+      sourceNote: 'USGS / Taiwan Oceanographic & ICPC post-event turbidity studies (2006-2007)',
+    },
   },
   {
     id: 'med-anchor-drag',
-    name: 'Sicily-Alexandria Corridor Cut',
-    subtitle: 'Severs BlueMed and PEACE Med trunks; triggers capacity congestion on remaining paths',
+    name: '2008 Mediterranean Anchor Multi-Cut',
+    subtitle: 'Severs BlueMed and PEACE Med trunks off Egypt/Sicily; congestion spikes on backup paths',
     category: 'Physical Cut',
     cableIdsToCut: ['bluemed', 'peace-med'],
     focusLatLon: [35.0, 19.0],
     suggestedCorridorId: 'mum-mrs',
     cause: 'Anchor Drag',
     subsystemFaultMode: 'complete-cut',
+    historicalEvent: {
+      date: '2008-01-30',
+      factualSummary:
+        'Severe winter storm anchorages near Alexandria & Mediterranean approaches severed SEA-ME-WE 4 and FLAG Europe-Asia within hours, followed by a Dec 2008 Sicily Strait cluster fault.',
+      impactHighlight:
+        'Triggered sharp latency spikes and transient packet loss across Middle East, South Asia, and East Africa prefixes.',
+      sourceNote: 'TeleGeography / RIPE NCC Mediterranean Routing Analysis (2008)',
+    },
   },
   {
     id: 'atlantic-storm',
@@ -1357,6 +1381,14 @@ export const SCENARIO_PRESETS: ScenarioPreset[] = [
     suggestedCorridorId: 'nyc-lon',
     cause: 'Trawler Snag',
     subsystemFaultMode: 'complete-cut',
+    historicalEvent: {
+      date: 'Historical Pattern (ICPC Shelf Risk)',
+      factualSummary:
+        'Broad continental shelves such as the Celtic Shelf / Western Approaches (<200m depth) experience concentrated bottom-trawler and ship-anchor hazards despite burial & double armoring.',
+      impactHighlight:
+        'ICPC statistics attribute roughly two-thirds of all subsea cable faults globally to fishing gear and vessel anchors in shallow shelf corridors.',
+      sourceNote: 'ICPC Subsea Cable Fault Cause Statistics',
+    },
   },
   {
     id: 'pfe-shunt-fault',

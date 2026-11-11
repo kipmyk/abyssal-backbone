@@ -104,12 +104,23 @@ export interface TrafficCorridor {
   physicallyReachable: boolean;
 }
 
+export type EventSubsystem = 'Optical' | 'BGP' | 'PFE' | 'Repair' | 'System';
+
 export interface NetworkEvent {
   id: string;
   timestamp: string;
+  relativeTime: string;
+  subsystem: EventSubsystem;
   severity: 'critical' | 'warning' | 'info' | 'recovery';
   code: string;
   message: string;
+}
+
+export interface HistoricalEventContext {
+  date: string;
+  factualSummary: string;
+  impactHighlight: string;
+  sourceNote: string;
 }
 
 export interface ScenarioPreset {
@@ -123,6 +134,7 @@ export interface ScenarioPreset {
   cause?: FaultCause;
   subsystemFaultMode?: SubsystemFaultMode;
   bgpConfig?: BgpControlPlaneConfig;
+  historicalEvent?: HistoricalEventContext;
 }
 
 export interface NetworkSnapshot {
