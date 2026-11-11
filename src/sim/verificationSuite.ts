@@ -1,3 +1,4 @@
+import { SimulatorStore } from '../app/store';
 import { sampleSeabedDepthMeters } from '../data/bathymetry';
 import { GLOSSARY_ENTRIES, MODEL_ASSUMPTIONS } from '../data/glossary';
 import { SCENARIO_PRESETS, SUBSEA_CABLES } from '../data/networkData';
@@ -289,6 +290,33 @@ export function runEngineeringVerificationSuite(): void {
   console.log(
     `[PASS] Usability & State Suite: Impact ΔCap=${comparison.capacityDeltaTbps} Tbps, Events=${faultEvents.length}, Share Hash Length=${hash.length} chars.`
   );
+
+  // 9. Reactive SimulatorStore Pub/Sub Verification
+  const reactiveStore = new SimulatorStore(new RoutingEngine());
+  let snapCount = 0;
+  let selectionCount = 0;
+  let filterCount = 0;
+  const unsubSnap = reactiveStore.on('snapshot', () => {
+    snapCount += 1;
+  });
+  reactiveStore.on('selection', () => {
+    selectionCount += 1;
+  });
+  reactiveStore.on('eventsFilter', () => {
+    filterCount += 1;
+  });
+
+  reactiveStore.setInspectedCable('seacom');
+  reactiveStore.setEventFilter('BGP');
+  reactiveStore.engine.severCable('seacom');
+  reactiveStore.refreshSnapshot('full');
+  unsubSnap();
+  reactiveStore.refreshSnapshot('full');
+  assert(
+    snapCount === 1 && selectionCount === 1 && filterCount === 1,
+    `Expected store pub/sub counts (1,1,1), got (${snapCount},${selectionCount},${filterCount})`
+  );
+  console.log('[PASS] Store Pub/Sub: TypedEventEmitter & SimulatorStore verified.');
 
   console.log('=== ALL PHASE 1-10 ENGINEERING & SCIENTIFIC INTEGRITY TESTS PASSED ===');
 }
