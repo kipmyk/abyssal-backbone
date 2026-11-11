@@ -12,7 +12,7 @@
   <body>
     <a href="#main-sim" class="skip-link visually-hidden">Skip to simulation controls</a>
 
-    <div id="app" class="app-shell" data-view-mode="split" data-density="simplified" data-fault-active="false">
+    <div id="app" class="app-shell" data-view-mode="split" data-density="engineering" data-fault-active="false">
       <header class="top-bar">
         <div class="brand-cluster">
           <div class="brand-mark" aria-hidden="true">
@@ -66,10 +66,10 @@
           </div>
 
           <div class="view-mode-group density-group" role="group" aria-label="Telemetry display density">
-            <button type="button" id="btn-density-simplified" class="view-mode-btn active" data-density-mode="simplified" aria-pressed="true">
+            <button type="button" id="btn-density-simplified" class="view-mode-btn" data-density-mode="simplified" aria-pressed="false">
               Simplified
             </button>
-            <button type="button" id="btn-density-engineering" class="view-mode-btn" data-density-mode="engineering" aria-pressed="false">
+            <button type="button" id="btn-density-engineering" class="view-mode-btn active" data-density-mode="engineering" aria-pressed="true">
               Engineering
             </button>
           </div>
