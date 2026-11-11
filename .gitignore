@@ -1,3 +1,5 @@
 node_modules/
+dist/
+recordings/
+scripts/
 .DS_Store
-
