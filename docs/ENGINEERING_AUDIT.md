@@ -78,3 +78,4 @@
 | **T-BGP-03** | Route Leak & Prefix Hijack | Injecting an unauthorized route leak or shorter-AS-path hijack diverts corridor traffic and induces congestion/blackhole with zero cables severed. | `severedCount === 0` AND `reroutedCount > 0`. |
 | **T-OTDR-01** | Localization Uncertainty | Fault distance estimate includes non-zero uncertainty $\pm \Delta x$ ($\text{km}$) scaling with fiber length, slack variance, and measurement method (C-OTDR vs. DC bridge). | $\Delta x > 0.5\text{ km}$ for long-haul faults; true fault lies within $[x_{\text{est}} - \Delta x, x_{\text{est}} + \Delta x]$. |
 | **T-REP-01** | Depth & Burial Repair Scaling | Repair ETR (hours) for a deep abyssal fault ($>4,500\text{ m}$) or deeply buried shelf fault in high sea state is strictly greater than a shallow unburied fault in calm seas. | $T_{\text{repair}}(5000\text{ m, Bft 6}) > T_{\text{repair}}(400\text{ m, Bft 2})$. |
+
