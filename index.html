@@ -6,7 +6,7 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
-    <title>Abyssal Backbone | Subsea Fiber-Optic &amp; BGP Fault Simulator</title>
+    <title>Abyssal Backbone | Subsea Optical, PFE &amp; BGP-4 Engineering Simulator</title>
   </head>
   <body>
     <a href="#main-sim" class="skip-link visually-hidden">Skip to simulation controls</a>
@@ -15,7 +15,7 @@
       <header class="top-bar">
         <div class="brand-cluster">
           <div class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="12" r="10" />
               <line x1="2" y1="12" x2="22" y2="12" />
               <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
@@ -23,26 +23,26 @@
           </div>
           <div class="brand-titles">
             <h1>ABYSSAL BACKBONE</h1>
-            <p class="brand-subtitle">Subsea Optical &amp; BGP Rerouting Simulator</p>
+            <p class="brand-subtitle">ITU-T G.977 Subsea Optical, PFE &amp; RFC 4271 BGP-4 Simulator</p>
           </div>
           <span id="global-status-pill" class="status-pill status-optimal">CONVERGED</span>
         </div>
 
-        <div class="kpi-strip" aria-label="Global network telemetry">
+        <div class="kpi-strip" aria-label="Calculated network telemetry">
           <div class="kpi-item">
-            <span class="kpi-label">Active Capacity</span>
+            <span class="kpi-label">Lit Trunk Capacity</span>
             <span id="kpi-capacity" class="kpi-value">0 / 0 Tbps</span>
           </div>
           <div class="kpi-item">
-            <span class="kpi-label">Mean Global RTT</span>
+            <span class="kpi-label">Mean Corridor RTT</span>
             <span id="kpi-rtt" class="kpi-value">0.0 ms</span>
           </div>
           <div class="kpi-item">
-            <span class="kpi-label">Severed Trunks</span>
+            <span class="kpi-label">Faulted Trunks</span>
             <span id="kpi-severed" class="kpi-value">0</span>
           </div>
           <div class="kpi-item">
-            <span class="kpi-label">Rerouted Flows</span>
+            <span class="kpi-label">Impacted BGP Flows</span>
             <span id="kpi-rerouted" class="kpi-value">0</span>
           </div>
         </div>
@@ -50,13 +50,13 @@
         <div class="header-actions">
           <div class="view-mode-group" role="group" aria-label="3D simulation viewport mode">
             <button type="button" class="view-mode-btn active" data-view-mode="split">
-              Split: Globe + 3D Seafloor
+              Split: Globe + Seafloor
             </button>
             <button type="button" class="view-mode-btn" data-view-mode="subsea">
-              3D Subsea ROV Floor
+              3D Seafloor &amp; ROV
             </button>
             <button type="button" class="view-mode-btn" data-view-mode="globe">
-              3D Orbital Globe
+              3D Hydrographic Globe
             </button>
           </div>
 
@@ -65,37 +65,21 @@
             id="btn-audio"
             class="btn-ghost"
             aria-pressed="true"
-            title="Toggle synthesized hydrophone and telemetry audio"
+            title="Toggle acoustic telemetry synthesis"
           >
-            <svg aria-hidden="true" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-              <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-              <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-            </svg>
-            <span id="audio-label">Audio On</span>
+            <span id="audio-label">Audio: On</span>
           </button>
 
           <button type="button" id="btn-pause-motion" class="btn-ghost">
-            <svg aria-hidden="true" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="6" y="4" width="4" height="16" />
-              <rect x="14" y="4" width="4" height="16" />
-            </svg>
             <span>Pause</span>
           </button>
 
           <button type="button" id="btn-hud-toggle" class="btn-ghost" aria-expanded="true">
-            <svg aria-hidden="true" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="3" width="18" height="18" rx="2" />
-              <line x1="9" y1="3" x2="9" y2="21" />
-            </svg>
-            <span>HUD</span>
+            <span>Panels</span>
           </button>
 
           <button type="button" id="btn-restore-all" class="btn-restore">
-            <svg aria-hidden="true" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3" />
-            </svg>
-            <span>Restore All</span>
+            <span>Reset Baseline</span>
           </button>
         </div>
       </header>
@@ -105,29 +89,28 @@
           id="globe-viewport"
           class="globe-viewport"
           role="application"
-          aria-label="Interactive 3D subsea fiber-optic globe. Click cables to sever or repair, click landing stations to trace routes."
+          aria-label="Interactive 3D subsea fiber-optic globe. Click cables to inject faults or mobilize repair vessels; click landing stations to inspect BGP routes."
         ></div>
         <div id="globe-markers" class="globe-markers" aria-hidden="true"></div>
 
-        <!-- 3D Underwater Ocean-Floor & ROV Simulation Stage -->
+        <!-- 3D Underwater Ocean-Floor & ROV Inspection Stage -->
         <section
           id="subsea-stage"
           class="subsea-stage"
-          aria-label="3D Underwater Seafloor, Cable Anatomy, and ROV Inspection Simulation"
+          aria-label="3D Seabed Environment, Cable Armor Cutaway, and ROV Inspection"
         >
           <header class="subsea-stage-bar">
             <div class="subsea-title-group">
-              <span class="subsea-live-dot" aria-hidden="true"></span>
-              <strong id="subsea-cable-title">AAE-1 Red Sea Segment</strong>
-              <span id="subsea-status-badge" class="badge badge-optimal">INTACT · PFE ±10.9kV</span>
+              <strong id="subsea-cable-title">AAE1-RS — AAE-1 (Red Sea Segment)</strong>
+              <span id="subsea-status-badge" class="badge badge-optimal">CARRIER UP</span>
             </div>
 
             <div class="subsea-camera-modes" role="group" aria-label="Subsea 3D camera perspective">
               <button type="button" class="subsea-cam-btn active" data-cam-mode="orbit">
-                3D Seabed Orbit
+                Seabed Orbit
               </button>
               <button type="button" class="subsea-cam-btn" data-cam-mode="rov-pov">
-                ROV Nose-Cam POV
+                ROV Nose-Cam
               </button>
               <button type="button" class="subsea-cam-btn" data-cam-mode="anatomy">
                 7-Layer Cable Cutaway
@@ -136,10 +119,10 @@
 
             <div class="subsea-QuickActions">
               <button type="button" id="btn-subsea-cut" class="cable-action-btn cut">
-                Sever Cable
+                Inject Fault
               </button>
-              <button type="button" id="btn-subsea-expand" class="btn-ghost" title="Toggle fullscreen 3D ocean floor">
-                <span id="subsea-expand-label">Expand 3D Floor</span>
+              <button type="button" id="btn-subsea-expand" class="btn-ghost">
+                <span id="subsea-expand-label">Maximize 3D</span>
               </button>
             </div>
           </header>
@@ -148,104 +131,68 @@
             id="subsea-rov-viewport"
             class="subsea-rov-viewport"
             role="application"
-            aria-label="Interactive 3D underwater ocean floor with armored fiber cable, Beryllium-Copper EDFA repeater, hazards, and Work-Class ROV"
+            aria-label="Interactive 3D seabed inspection viewport"
           ></div>
 
-          <footer class="subsea-telemetry-strip" aria-label="Physical abyssal environment telemetry">
+          <footer class="subsea-telemetry-strip" aria-label="Calculated seabed and wet-plant parameters">
             <div class="subsea-stat">
-              <span class="meta-label">Seabed Depth</span>
-              <span id="subsea-depth-val" class="mono-val">2,150 m</span>
+              <span class="meta-label">Bathymetric Depth (Est.)</span>
+              <span id="subsea-depth-val" class="mono-val">-- m</span>
             </div>
             <div class="subsea-stat">
-              <span class="meta-label">Hydrostatic Pressure</span>
-              <span id="subsea-pressure-val" class="mono-val">21.7 MPa (215 bar)</span>
+              <span class="meta-label">Hydrostatic Pressure (Calc.)</span>
+              <span id="subsea-pressure-val" class="mono-val">-- MPa</span>
             </div>
             <div class="subsea-stat">
-              <span class="meta-label">Bottom Temp / Salinity</span>
-              <span id="subsea-temp-val" class="mono-val">2.4 °C · 34.9 PSU</span>
+              <span class="meta-label">Armor &amp; Burial Target</span>
+              <span id="subsea-temp-val" class="mono-val">--</span>
             </div>
             <div class="subsea-stat">
-              <span class="meta-label">Cable Armor &amp; Repeaters</span>
-              <span id="subsea-armor-val" class="mono-val">Double-Armored · 28 EDFA Pods</span>
+              <span class="meta-label">Sediment &amp; Wet Plant</span>
+              <span id="subsea-armor-val" class="mono-val">--</span>
             </div>
           </footer>
         </section>
 
-        <!-- Floating Legend & Interaction Hint -->
+        <!-- Status Legend Bar -->
         <div class="globe-legend" aria-hidden="true">
-          <span class="legend-item"><i class="dot dot-cyan"></i>Optimal</span>
-          <span class="legend-item"><i class="dot dot-amber"></i>High Load</span>
-          <span class="legend-item"><i class="dot dot-crimson"></i>Congested / Cut</span>
-          <span class="legend-item"><i class="dot dot-gold"></i>Selected Trace</span>
+          <span class="legend-item"><i class="dot dot-cyan"></i>Nominal Trunk</span>
+          <span class="legend-item"><i class="dot dot-amber"></i>Degraded / High Load</span>
+          <span class="legend-item"><i class="dot dot-crimson"></i>Optical LOS / Cut</span>
+          <span class="legend-item"><i class="dot dot-gold"></i>Selected BGP Path</span>
           <span class="legend-sep">|</span>
-          <span class="legend-hint">Click any cable to sever / repair</span>
+          <span class="legend-hint">Simulated Telemetry (ITU-T G.977 / RFC 4271)</span>
         </div>
 
         <!-- Left Control Panel -->
-        <aside id="left-dock" class="hud-panel left-dock" aria-label="Fault injection and traceroute controls">
+        <aside id="left-dock" class="hud-panel left-dock" aria-label="Scenario injection and BGP path inspector">
           <section class="panel-section">
             <div class="section-header">
-              <h2>Fault Scenarios</h2>
-              <span class="micro-badge">Click 3D Cable to Cut</span>
-            </div>
-            <div class="field-group">
-              <label for="fault-cause-select">Cut Mechanism</label>
-              <select id="fault-cause-select" class="hud-select">
-                <option value="Auto">Auto (By Depth &amp; Hazard Zone)</option>
-                <option value="Anchor Drag">Ship Anchor Drag</option>
-                <option value="Turbidity Landslide">Subsea Turbidity Landslide</option>
-                <option value="Trawler Snag">Bottom Trawler Snag</option>
-                <option value="PFE Shunt Fault">PFE High-Voltage Shunt Fault</option>
-              </select>
-            </div>
-            <div id="scenario-list" class="scenario-grid"></div>
-          </section>
-
-          <section class="panel-section">
-            <div class="section-header">
-              <h2>Camera Focus</h2>
-            </div>
-            <div class="camera-pills" id="camera-presets">
-              <button type="button" class="pill-btn" data-lat="16" data-lon="34" data-dist="27.5">EMEA / Red Sea</button>
-              <button type="button" class="pill-btn" data-lat="-8" data-lon="28" data-dist="28">Africa Ring</button>
-              <button type="button" class="pill-btn" data-lat="36" data-lon="-36" data-dist="27">Trans-Atlantic</button>
-              <button type="button" class="pill-btn" data-lat="16" data-lon="122" data-dist="28">Indo-Pacific</button>
-              <button type="button" class="pill-btn" data-lat="10" data-lon="15" data-dist="33">Global</button>
-            </div>
-          </section>
-
-          <section class="panel-section">
-            <div class="section-header">
-              <h2>Live Optical Traceroute</h2>
+              <h2>BGP-4 &amp; Optical Path Inspector</h2>
               <span id="trace-status-badge" class="badge badge-optimal">OPTIMAL</span>
             </div>
 
             <div class="trace-selectors">
               <div class="field-group">
-                <label for="trace-src">Source CLS</label>
+                <label for="trace-src">Origin CLS (AS)</label>
                 <select id="trace-src" class="hud-select"></select>
               </div>
-              <button type="button" id="btn-swap-trace" class="btn-icon" aria-label="Swap source and destination">
-                <svg aria-hidden="true" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="17 1 21 5 17 9" />
-                  <path d="M3 11V9a4 4 0 0 1 4-4h14" />
-                  <polyline points="7 23 3 19 7 15" />
-                  <path d="M21 13v2a4 4 0 0 1-4 4H3" />
-                </svg>
+              <button type="button" id="btn-swap-trace" class="btn-icon" aria-label="Swap origin and destination">
+                &#8646;
               </button>
               <div class="field-group">
-                <label for="trace-dst">Destination CLS</label>
+                <label for="trace-dst">Destination CLS (AS)</label>
                 <select id="trace-dst" class="hud-select"></select>
               </div>
             </div>
 
             <div id="trace-metrics" class="trace-metrics">
               <div class="trace-metric-cell">
-                <span class="meta-label">Live RTT</span>
+                <span class="meta-label">Calc. RTT</span>
                 <span id="trace-rtt" class="mono-val">-- ms</span>
               </div>
               <div class="trace-metric-cell">
-                <span class="meta-label">Delta</span>
+                <span class="meta-label">RTT Delta</span>
                 <span id="trace-delta" class="mono-val">+0.0 ms</span>
               </div>
               <div class="trace-metric-cell">
@@ -254,16 +201,50 @@
               </div>
             </div>
 
-            <div id="trace-hops-chain" class="trace-chain" aria-live="polite"></div>
+            <div id="bgp-rib-box" class="trace-chain" aria-live="polite"></div>
+            <div id="trace-hops-chain" class="trace-chain"></div>
           </section>
 
           <section class="panel-section">
             <div class="section-header">
-              <h2>Undersea &amp; Telemetry Layers</h2>
-              <span id="ocean-opacity-val" class="micro-badge">36% Water</span>
+              <h2>Engineering Fault Scenarios</h2>
+              <span class="micro-badge">Deterministic</span>
+            </div>
+            <div class="field-group">
+              <label for="fault-cause-select">Manual Cable Click Fault Mode</label>
+              <select id="fault-cause-select" class="hud-select">
+                <option value="Auto">Auto (By Depth &amp; Hazard Zone)</option>
+                <option value="Anchor Drag">Ship Anchor Cut (Open + Fiber Cut)</option>
+                <option value="Turbidity Landslide">Subsea Turbidity Landslide</option>
+                <option value="Trawler Snag">Bottom Trawler Entanglement</option>
+                <option value="PFE Shunt Fault">PFE Insulation Shunt Fault</option>
+                <option value="Repeater Pump Failure">EDFA Repeater Pump Degradation</option>
+                <option value="Shore PFE Terminal Outage">Single Shore PFE Terminal Outage</option>
+              </select>
+            </div>
+            <div id="scenario-list" class="scenario-grid"></div>
+          </section>
+
+          <section class="panel-section">
+            <div class="section-header">
+              <h2>Regional Hydrographic Focus</h2>
+            </div>
+            <div class="camera-pills" id="camera-presets">
+              <button type="button" class="pill-btn" data-lat="16" data-lon="34" data-dist="25">Red Sea / EMEA</button>
+              <button type="button" class="pill-btn" data-lat="-14" data-lon="24" data-dist="27">Africa Ring &amp; Cape</button>
+              <button type="button" class="pill-btn" data-lat="36" data-lon="-36" data-dist="26">North Atlantic</button>
+              <button type="button" class="pill-btn" data-lat="16" data-lon="122" data-dist="27">Indo-Pacific</button>
+              <button type="button" class="pill-btn" data-lat="10" data-lon="15" data-dist="32">Global Overview</button>
+            </div>
+          </section>
+
+          <section class="panel-section">
+            <div class="section-header">
+              <h2>Viewport Layers</h2>
+              <span id="ocean-opacity-val" class="micro-badge">36% Surface</span>
             </div>
             <div class="slider-group">
-              <label for="ocean-opacity-slider" class="meta-label">Ocean Surface Opacity (X-Ray Seabed)</label>
+              <label for="ocean-opacity-slider" class="meta-label">Ocean Surface Opacity (Bathymetric Reveal)</label>
               <input
                 id="ocean-opacity-slider"
                 type="range"
@@ -276,7 +257,7 @@
             <div class="toggle-grid">
               <label class="toggle-item" for="chk-pulses">
                 <input type="checkbox" id="chk-pulses" checked />
-                <span>Optical Pulses</span>
+                <span>Optical Traffic</span>
               </label>
               <label class="toggle-item" for="chk-repeaters">
                 <input type="checkbox" id="chk-repeaters" checked />
@@ -284,11 +265,11 @@
               </label>
               <label class="toggle-item" for="chk-hazards">
                 <input type="checkbox" id="chk-hazards" checked />
-                <span>Hazard Zones</span>
+                <span>Hazard Contours</span>
               </label>
               <label class="toggle-item" for="chk-heatmap">
                 <input type="checkbox" id="chk-heatmap" checked />
-                <span>Congestion Heat</span>
+                <span>Utilization Color</span>
               </label>
               <label class="toggle-item" for="chk-terminator">
                 <input type="checkbox" id="chk-terminator" checked />
@@ -296,28 +277,98 @@
               </label>
               <label class="toggle-item" for="chk-orbit">
                 <input type="checkbox" id="chk-orbit" />
-                <span>Auto-Orbit</span>
+                <span>Orbit Camera</span>
               </label>
             </div>
           </section>
         </aside>
 
-        <!-- Right Telemetry Inspector Panel -->
-        <aside id="right-dock" class="hud-panel right-dock" aria-label="Corridor telemetry and cable inventory">
+        <!-- Right Engineering Instrument Panel -->
+        <aside id="right-dock" class="hud-panel right-dock" aria-label="Optical, PFE, C-OTDR, and Repair engineering instruments">
           <div class="tabs-shell">
-            <div class="tablist" role="tablist" aria-label="Telemetry views">
-              <button type="button" role="tab" id="tab-corridors" aria-selected="true" tabindex="0">Corridors</button>
-              <button type="button" role="tab" id="tab-seabed" aria-selected="false" tabindex="-1">Seabed &amp; OTDR</button>
-              <button type="button" role="tab" id="tab-cables" aria-selected="false" tabindex="-1">Cables</button>
-              <button type="button" role="tab" id="tab-events" aria-selected="false" tabindex="-1">BGP Log</button>
+            <div class="tablist" role="tablist" aria-label="Engineering instruments">
+              <button type="button" role="tab" id="tab-seabed" aria-selected="true" tabindex="0">Optical &amp; OTDR</button>
+              <button type="button" role="tab" id="tab-corridors" aria-selected="false" tabindex="-1">BGP Corridors</button>
+              <button type="button" role="tab" id="tab-repair" aria-selected="false" tabindex="-1">Repair Ops</button>
+              <button type="button" role="tab" id="tab-cables" aria-selected="false" tabindex="-1">Trunks</button>
+              <button type="button" role="tab" id="tab-events" aria-selected="false" tabindex="-1">Event Log</button>
             </div>
 
-            <div role="tabpanel" id="panel-corridors" aria-labelledby="tab-corridors" class="tab-panel">
+            <!-- TAB 1: OPTICAL, PFE & C-OTDR INSTRUMENT (Default Active for immediate technical inspection) -->
+            <div role="tabpanel" id="panel-seabed" aria-labelledby="tab-seabed" class="tab-panel">
+              <div class="panel-inner">
+                <div class="field-group">
+                  <div class="section-header">
+                    <label for="otdr-cable-select">Inspected Subsea System</label>
+                    <span id="otdr-provenance-badge" class="micro-badge">VERIFIED · ITU-T G.977</span>
+                  </div>
+                  <select id="otdr-cable-select" class="hud-select"></select>
+                </div>
+
+                <!-- ITU-T G.977 Optical Link Budget & G.Suppl.41 OSNR/Q/BER Grid -->
+                <div class="otdr-telemetry-grid">
+                  <div class="trace-metric-cell">
+                    <span class="meta-label">Fiber / Attenuation</span>
+                    <span id="opt-fiber-val" class="mono-val">--</span>
+                  </div>
+                  <div class="trace-metric-cell">
+                    <span class="meta-label">Span Loss / EDFA Gain</span>
+                    <span id="opt-span-val" class="mono-val">--</span>
+                  </div>
+                  <div class="trace-metric-cell">
+                    <span class="meta-label">GSNR / Linear OSNR</span>
+                    <span id="otdr-osnr" class="mono-val">-- dB</span>
+                  </div>
+                  <div class="trace-metric-cell">
+                    <span class="meta-label">Q-Factor / EOL Margin</span>
+                    <span id="opt-q-val" class="mono-val">-- dB</span>
+                  </div>
+                  <div class="trace-metric-cell">
+                    <span class="meta-label">Pre / Post-FEC BER</span>
+                    <span id="opt-ber-val" class="mono-val">--</span>
+                  </div>
+                  <div class="trace-metric-cell">
+                    <span class="meta-label">Dispersion (CD / PMD)</span>
+                    <span id="opt-disp-val" class="mono-val">--</span>
+                  </div>
+                </div>
+
+                <!-- Submarine Constant-Current PFE Electrical Grid -->
+                <div class="otdr-telemetry-grid">
+                  <div class="trace-metric-cell">
+                    <span class="meta-label">PFE Terminal Feed</span>
+                    <span id="otdr-pfe" class="mono-val">-- kV</span>
+                  </div>
+                  <div class="trace-metric-cell">
+                    <span class="meta-label">Line Current / Resistance</span>
+                    <span id="pfe-current-val" class="mono-val">--</span>
+                  </div>
+                  <div class="trace-metric-cell">
+                    <span class="meta-label">Localization / Uncertainty</span>
+                    <span id="otdr-depth" class="mono-val">NOMINAL</span>
+                  </div>
+                </div>
+
+                <div class="otdr-canvas-wrap">
+                  <canvas id="seabed-otdr-canvas" class="seabed-otdr-canvas"></canvas>
+                </div>
+
+                <div id="otdr-notes-box" class="trace-chain"></div>
+
+                <div class="otdr-actions">
+                  <button type="button" id="btn-dive-cable" class="btn-ghost" style="flex:1;">Center Globe on Cable</button>
+                  <button type="button" id="btn-otdr-action" class="cable-action-btn cut">Inject Fault</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- TAB 2: BGP CORRIDORS TABLE -->
+            <div role="tabpanel" id="panel-corridors" aria-labelledby="tab-corridors" class="tab-panel" hidden="until-found">
               <div class="panel-inner">
                 <div tabindex="0" role="region" aria-labelledby="corridors-caption" class="table-wrapper">
                   <table class="telemetry-table">
                     <caption id="corridors-caption" class="visually-hidden">
-                      Global subsea traffic corridors with baseline and live round-trip latency
+                      Global subsea traffic corridors with baseline RTT, live RTT, BGP AS path length, and status
                     </caption>
                     <thead>
                       <tr>
@@ -333,39 +384,15 @@
               </div>
             </div>
 
-            <div role="tabpanel" id="panel-seabed" aria-labelledby="tab-seabed" class="tab-panel" hidden="until-found">
+            <!-- TAB 3: 15-STAGE MARINE REPAIR OPERATIONS INSPECTOR -->
+            <div role="tabpanel" id="panel-repair" aria-labelledby="tab-repair" class="tab-panel" hidden="until-found">
               <div class="panel-inner">
-                <div class="field-group">
-                  <label for="otdr-cable-select">Inspected Subsea System</label>
-                  <select id="otdr-cable-select" class="hud-select"></select>
-                </div>
-
-                <div class="otdr-telemetry-grid">
-                  <div class="trace-metric-cell">
-                    <span class="meta-label">PFE Feed</span>
-                    <span id="otdr-pfe" class="mono-val">-- kV</span>
-                  </div>
-                  <div class="trace-metric-cell">
-                    <span class="meta-label">OSNR / Repeaters</span>
-                    <span id="otdr-osnr" class="mono-val">-- dB</span>
-                  </div>
-                  <div class="trace-metric-cell">
-                    <span class="meta-label">Fault / Depth</span>
-                    <span id="otdr-depth" class="mono-val">NOMINAL</span>
-                  </div>
-                </div>
-
-                <div class="otdr-canvas-wrap">
-                  <canvas id="seabed-otdr-canvas" class="seabed-otdr-canvas"></canvas>
-                </div>
-
-                <div class="otdr-actions">
-                  <button type="button" id="btn-dive-cable" class="btn-ghost" style="flex:1;">Dive Camera to Seabed</button>
-                  <button type="button" id="btn-otdr-action" class="cable-action-btn cut">Sever / Repair</button>
-                </div>
+                <div id="repair-summary-box" class="trace-chain"></div>
+                <ol id="repair-steps-list" class="events-list"></ol>
               </div>
             </div>
 
+            <!-- TAB 4: SUBSEA CABLE TRUNKS INVENTORY -->
             <div role="tabpanel" id="panel-cables" aria-labelledby="tab-cables" class="tab-panel" hidden="until-found">
               <div class="panel-inner">
                 <div class="filter-bar">
@@ -374,13 +401,14 @@
                     id="cable-search"
                     type="search"
                     class="hud-input"
-                    placeholder="Filter cable, corridor, or code..."
+                    placeholder="Filter system code, landing point, or owner..."
                   />
                 </div>
                 <div id="cables-list" class="cables-list"></div>
               </div>
             </div>
 
+            <!-- TAB 5: TELECOMMUNICATIONS EVENT LOG -->
             <div role="tabpanel" id="panel-events" aria-labelledby="tab-events" class="tab-panel" hidden="until-found">
               <div class="panel-inner">
                 <ul id="events-list" class="events-list"></ul>
@@ -400,4 +428,3 @@
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
-

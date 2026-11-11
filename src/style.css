@@ -355,18 +355,17 @@ body {
 /* Floating Legend */
 .globe-legend {
   position: absolute;
-  inset-block-start: 14px;
+  inset-block-start: 10px;
   inset-inline-start: 50%;
   transform: translateX(-50%);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
-  padding: 6px 14px;
-  border-radius: 999px;
-  background: rgba(7, 14, 28, 0.78);
+  padding: 5px 12px;
+  border-radius: 4px;
+  background: rgba(5, 11, 22, 0.92);
   border: 1px solid var(--border-subtle);
-  backdrop-filter: blur(10px);
   font-size: 11px;
   color: var(--text-secondary);
   pointer-events: none;
@@ -377,20 +376,20 @@ body {
 /* 3D Underwater Ocean-Floor & ROV Simulation Stage */
 .subsea-stage {
   position: absolute;
-  inset-inline-start: 346px;
-  inset-inline-end: 398px;
-  inset-block-end: 14px;
+  inset-inline-start: 344px;
+  inset-inline-end: 404px;
+  inset-block-end: 12px;
   block-size: 42%;
-  min-block-size: 270px;
+  min-block-size: 265px;
   display: grid;
   grid-template-rows: auto 1fr auto;
-  background: rgba(2, 10, 24, 0.92);
-  border: 1px solid var(--border-accent);
-  border-radius: 10px;
-  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.65);
+  background: #040a15;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 6px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.65);
   overflow: hidden;
   z-index: 18;
-  transition: inset 0.22s ease, block-size 0.22s ease, opacity 0.2s ease;
+  transition: inset 0.2s ease, block-size 0.2s ease, opacity 0.2s ease;
 }
 
 .app-shell[data-view-mode='globe'] .subsea-stage {
@@ -1015,7 +1014,9 @@ body {
   background: rgba(249, 115, 22, 0.2);
   color: #fb923c;
 }
-.badge-partitioned {
+.badge-partitioned,
+.badge-policy_blocked,
+.badge-hijacked {
   background: rgba(239, 68, 68, 0.2);
   color: #f87171;
 }
@@ -1079,6 +1080,11 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.cable-card.degraded {
+  border-inline-start-color: var(--accent-amber);
+  background: rgba(120, 53, 15, 0.16);
 }
 
 .cable-card.severed {

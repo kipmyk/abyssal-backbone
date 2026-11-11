@@ -166,12 +166,12 @@ export function sampleSeabedDepthMeters(lat: number, lon: number): number {
 
 /**
  * Converts seabed depth (e.g. -4200m) into radial world-space offset below sea level (R = 10.0).
- * Exaggerated cleanly so trenches, continental slopes, and ridges read dramatically in 3D!
+ * Proportional hydrographic relief scaling so continental shelves, slopes, ridges, and trenches
+ * maintain realistic geometric relationships without excessive vertical distortion.
  */
 export function depthMetersToWorldOffset(depthMeters: number): number {
-  // depthMeters is negative (e.g. -4500). Map 0..-8500m -> 0..-0.68 world units
   const absM = Math.max(0, -depthMeters);
-  return -Math.pow(absM / 8500, 0.78) * 0.68;
+  return -Math.pow(absM / 8500, 0.85) * 0.46;
 }
 
 export function classifyHazardAtCoord(

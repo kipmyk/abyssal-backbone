@@ -1,10 +1,21 @@
-export type CableCutState = 'active' | 'severed' | 'repairing';
+import type { CableProvenanceRecord, SeabedEngineeringSample } from '../data/provenance';
+import type { BgpControlPlaneConfig, BgpRouteAdvertisement } from '../sim/bgpEngine';
+import type { OpticalPerformanceMetrics } from '../sim/opticalEngine';
+import type { OtdrLocalizationReport } from '../sim/otdrEngine';
+import type { PfeTelemetry, SubsystemFaultMode } from '../sim/pfeEngine';
+import type { SubseaRepairPlan } from '../sim/repairEngine';
+
+export type CableCutState = 'active' | 'degraded' | 'severed' | 'repairing';
 
 export type FaultCause =
   | 'Anchor Drag'
   | 'Turbidity Landslide'
   | 'Trawler Snag'
-  | 'PFE Shunt Fault';
+  | 'PFE Shunt Fault'
+  | 'Seismic Earthquake'
+  | 'Branching Unit Fault'
+  | 'Repeater Pump Failure'
+  | 'Shore PFE Terminal Outage';
 
 export type RepairPhase = 'steaming' | 'grappling' | 'splicing' | 'pfe-ramp';
 
@@ -39,10 +50,12 @@ export interface SubseaCable {
 export interface CableRuntimeState {
   id: string;
   cutState: CableCutState;
+  subsystemFaultMode: SubsystemFaultMode;
   cutCoord: [number, number] | null;
   cutProgressT: number; // 0..1 along cable polyline
   faultCause: FaultCause | null;
   faultDistanceKm: number | null;
+  faultUncertaintyKm: number | null;
   faultDepthM: number | null;
   repairProgress: number; // 0..1 when repairing
   repairPhase: RepairPhase | null;
@@ -52,11 +65,23 @@ export interface CableRuntimeState {
   effectiveLatencyMs: number;
   baseLatencyMs: number;
   pfeVoltageKv: number; // ±kV power feeding equipment
-  repeaterCount: number; // EDFA optical repeaters spaced ~95 km
-  osnrDb: number; // Optical Signal-to-Noise Ratio
+  repeaterCount: number; // EDFA optical repeaters
+  osnrDb: number; // Generalized SNR / OSNR (dB)
+  optical: OpticalPerformanceMetrics;
+  pfe: PfeTelemetry;
+  otdr: OtdrLocalizationReport;
+  seabedSample: SeabedEngineeringSample;
+  provenance: CableProvenanceRecord;
+  repairPlan: SubseaRepairPlan | null;
 }
 
-export type CorridorStatus = 'OPTIMAL' | 'REROUTED' | 'CONGESTED' | 'PARTITIONED';
+export type CorridorStatus =
+  | 'OPTIMAL'
+  | 'REROUTED'
+  | 'CONGESTED'
+  | 'POLICY_BLOCKED'
+  | 'HIJACKED'
+  | 'PARTITIONED';
 
 export interface TrafficCorridor {
   id: string;
@@ -75,6 +100,8 @@ export interface TrafficCorridor {
   bottleneckUtilization: number;
   packetLossPct: number;
   jitterMs: number;
+  bgpRoute: BgpRouteAdvertisement | null;
+  physicallyReachable: boolean;
 }
 
 export interface NetworkEvent {
@@ -89,10 +116,13 @@ export interface ScenarioPreset {
   id: string;
   name: string;
   subtitle: string;
+  category: 'Physical Cut' | 'Power & Wet Plant' | 'BGP Control Plane' | 'Facility Outage';
   cableIdsToCut: string[];
   focusLatLon: [number, number];
   suggestedCorridorId: string;
   cause?: FaultCause;
+  subsystemFaultMode?: SubsystemFaultMode;
+  bgpConfig?: BgpControlPlaneConfig;
 }
 
 export interface NetworkSnapshot {
@@ -104,7 +134,9 @@ export interface NetworkSnapshot {
   meanGlobalRttMs: number;
   baselineMeanRttMs: number;
   severedCount: number;
+  degradedCount: number;
   repairingCount: number;
   reroutedCount: number;
   partitionedCount: number;
+  bgpConfig: BgpControlPlaneConfig;
 }

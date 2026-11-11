@@ -913,12 +913,13 @@ export class GlobeScene {
 
     const placePoint = (lat: number, lon: number) => {
       if (cable.isTerrestrial) {
-        return latLonToVector3(lat, lon, GLOBE_RADIUS + 0.055);
+        return latLonToVector3(lat, lon, GLOBE_RADIUS + 0.032);
       }
       const onLand = this.isLandAt(lat, lon);
+      // Rest cable flush on the displaced seabed surface (+0.008 anti-z-fight clearance)
       const depthOffset = onLand
-        ? 0.025
-        : depthMetersToWorldOffset(sampleSeabedDepthMeters(lat, lon)) + 0.028;
+        ? 0.026
+        : depthMetersToWorldOffset(sampleSeabedDepthMeters(lat, lon)) + 0.008;
       return latLonToVector3(lat, lon, GLOBE_RADIUS + depthOffset);
     };
 
@@ -1075,9 +1076,10 @@ export class GlobeScene {
     for (let i = 0; i < this.repeaters.length; i++) {
       const rep = this.repeaters[i];
       const st = this.snapshot.cables.get(rep.cableId);
-      if (!st || st.cutState !== 'active') {
-        // PFE tripped -> repeaters lose ±kV power and go dark red
+      if (!st || st.cutState === 'severed' || st.cutState === 'repairing') {
         this.tmpColor.setHex(st?.cutState === 'repairing' ? 0xf59e0b : 0x7f1d1d);
+      } else if (st.cutState === 'degraded') {
+        this.tmpColor.setHex(0xf59e0b);
       } else if (this.selectedCorridorCables.has(rep.cableId)) {
         this.tmpColor.setHex(0xfef08a);
       } else {
@@ -1192,7 +1194,18 @@ export class GlobeScene {
         continue;
       }
 
-      vis.shockwaveGroup.visible = false;
+      vis.shockwaveGroup.visible = state.cutState === 'degraded';
+      if (state.cutState === 'degraded') {
+        const cutPos = vis.curve.getPointAt(
+          THREE.MathUtils.clamp(state.cutProgressT, 0, 1)
+        );
+        const normal = cutPos.clone().normalize();
+        vis.shockwaveGroup.position.copy(cutPos);
+        vis.shockwaveRing.quaternion.setFromUnitVectors(
+          new THREE.Vector3(0, 0, 1),
+          normal
+        );
+      }
       vis.repairShipMesh.visible = false;
       vis.rovTetherLine.visible = false;
       vis.rovBeacon.visible = false;
@@ -1200,6 +1213,9 @@ export class GlobeScene {
       if (isHovered) {
         vis.material.color.setHex(0xffffff);
         vis.material.opacity = 1.0;
+      } else if (state.cutState === 'degraded') {
+        vis.material.color.setHex(0xf59e0b);
+        vis.material.opacity = 0.95;
       } else if (isHighlighted) {
         vis.material.color.setHex(
           state.utilization >= 0.85 ? 0xfb7185 : 0xfde047
@@ -1453,7 +1469,10 @@ export class GlobeScene {
       for (let i = 0; i < this.packets.length; i++) {
         const pkt = this.packets[i];
         const state = this.snapshot.cables.get(pkt.cableId);
-        if (!state || state.cutState !== 'active') {
+        if (
+          !state ||
+          (state.cutState !== 'active' && state.cutState !== 'degraded')
+        ) {
           this.dummy.scale.setScalar(0);
           this.dummy.updateMatrix();
           this.packetMesh.setMatrixAt(i, this.dummy.matrix);

@@ -10,6 +10,8 @@ import {
   type HoverInfo,
   type ProjectedMarker,
 } from './globe/GlobeScene';
+import { STATION_ASN_MAP } from './sim/bgpEngine';
+import { computeSubseaRepairPlan } from './sim/repairEngine';
 import { RoutingEngine } from './sim/routingEngine';
 import {
   SubseaRovScene,
@@ -50,6 +52,7 @@ const viewModeButtons = Array.from(
 const subseaCamButtons = Array.from(
   document.querySelectorAll<HTMLButtonElement>('.subsea-cam-btn')
 );
+
 const globalStatusPill = document.getElementById('global-status-pill')!;
 const kpiCapacity = document.getElementById('kpi-capacity')!;
 const kpiRtt = document.getElementById('kpi-rtt')!;
@@ -81,6 +84,7 @@ const traceStatusBadge = document.getElementById('trace-status-badge')!;
 const traceRttEl = document.getElementById('trace-rtt')!;
 const traceDeltaEl = document.getElementById('trace-delta')!;
 const traceLossEl = document.getElementById('trace-loss')!;
+const bgpRibBox = document.getElementById('bgp-rib-box')!;
 const traceHopsChain = document.getElementById('trace-hops-chain')!;
 
 const oceanOpacitySlider = document.getElementById(
@@ -100,9 +104,17 @@ const corridorsTbody = document.getElementById('corridors-tbody')!;
 const otdrCableSelect = document.getElementById(
   'otdr-cable-select'
 ) as HTMLSelectElement;
-const otdrPfeEl = document.getElementById('otdr-pfe')!;
+const otdrProvenanceBadge = document.getElementById('otdr-provenance-badge')!;
+const optFiberVal = document.getElementById('opt-fiber-val')!;
+const optSpanVal = document.getElementById('opt-span-val')!;
 const otdrOsnrEl = document.getElementById('otdr-osnr')!;
+const optQVal = document.getElementById('opt-q-val')!;
+const optBerVal = document.getElementById('opt-ber-val')!;
+const optDispVal = document.getElementById('opt-disp-val')!;
+const otdrPfeEl = document.getElementById('otdr-pfe')!;
+const pfeCurrentVal = document.getElementById('pfe-current-val')!;
 const otdrDepthEl = document.getElementById('otdr-depth')!;
+const otdrNotesBox = document.getElementById('otdr-notes-box')!;
 const seabedOtdrCanvas = document.getElementById(
   'seabed-otdr-canvas'
 ) as HTMLCanvasElement;
@@ -113,6 +125,8 @@ const btnOtdrAction = document.getElementById(
   'btn-otdr-action'
 ) as HTMLButtonElement;
 
+const repairSummaryBox = document.getElementById('repair-summary-box')!;
+const repairStepsList = document.getElementById('repair-steps-list')!;
 const cableSearchInput = document.getElementById(
   'cable-search'
 ) as HTMLInputElement;
@@ -164,15 +178,15 @@ const globe = new GlobeScene(globeContainer, {
       globe.triggerShockwave(cableId);
       telemetryAudio.playCableCut();
       setTimeout(() => telemetryAudio.playRerouteChirp(), 240);
-      announce(`${cable.name} severed. OTDR fault localized.`);
-    } else if (state.cutState === 'severed') {
+      announce(`Cable fault injected on ${cable.name}.`);
+    } else if (state.cutState === 'severed' || state.cutState === 'degraded') {
       engine.dispatchRepairShip(cableId);
       telemetryAudio.playRerouteChirp();
-      announce(`Repair ship dispatched to ${cable.name}.`);
+      announce(`Repair vessel mobilized for ${cable.name}.`);
     } else {
       engine.restoreCable(cableId);
       telemetryAudio.playRepairSplice();
-      announce(`${cable.name} optical splice completed.`);
+      announce(`Service restoration complete on ${cable.name}.`);
     }
     syncUI();
   },
@@ -196,7 +210,7 @@ const globe = new GlobeScene(globeContainer, {
     engine.setCustomTraceEndpoints(traceSrcSelect.value, traceDstSelect.value);
     selectedCorridorId = 'custom-trace';
     syncUI();
-    announce(`Traceroute endpoint updated to ${station.city}.`);
+    announce(`BGP path inspection updated to ${station.city}.`);
   },
 
   onHoverChange: (info) => {
@@ -213,7 +227,7 @@ globe.setOnTick((dt) => {
   if (completed.length > 0) {
     telemetryAudio.playRepairSplice();
     syncUI();
-    announce(`Cable repair completed: ${completed.join(', ')}`);
+    announce(`Service restored on: ${completed.join(', ')}`);
     return;
   }
 
@@ -230,6 +244,7 @@ globe.setOnTick((dt) => {
       );
       renderCablesList();
       renderSeabedOtdrPanel();
+      renderRepairPanel();
     }
   }
 });
@@ -240,14 +255,15 @@ function initStaticControls(): void {
     a.city.localeCompare(b.city)
   );
   for (const s of sortedStations) {
+    const asn = STATION_ASN_MAP[s.id]?.asn ?? 65000;
     const opt1 = document.createElement('option');
     opt1.value = s.id;
-    opt1.textContent = `${s.city} (${s.country})`;
+    opt1.textContent = `${s.city} (AS${asn})`;
     traceSrcSelect.appendChild(opt1);
 
     const opt2 = document.createElement('option');
     opt2.value = s.id;
-    opt2.textContent = `${s.city} (${s.country})`;
+    opt2.textContent = `${s.city} (AS${asn})`;
     traceDstSelect.appendChild(opt2);
   }
   traceSrcSelect.value = 'mombasa';
@@ -257,7 +273,7 @@ function initStaticControls(): void {
   for (const c of SUBSEA_CABLES) {
     const opt = document.createElement('option');
     opt.value = c.id;
-    opt.textContent = `${c.systemCode} — ${c.name}`;
+    opt.textContent = `${c.systemCode} — ${c.name} (${c.lengthKm.toLocaleString()} km)`;
     otdrCableSelect.appendChild(opt);
   }
   otdrCableSelect.value = inspectedCableId;
@@ -268,12 +284,18 @@ function initStaticControls(): void {
     btn.className = 'scenario-btn';
     btn.dataset.scenarioId = preset.id;
     btn.innerHTML = `
-      <span class="scenario-title">${escapeHtml(preset.name)}</span>
+      <span class="scenario-title">[${escapeHtml(preset.category)}] ${escapeHtml(preset.name)}</span>
       <span class="scenario-desc">${escapeHtml(preset.subtitle)}</span>
     `;
     btn.addEventListener('click', () => {
       activeScenarioId = preset.id;
-      engine.applyScenario(preset.cableIdsToCut, preset.name, preset.cause);
+      engine.applyScenario(
+        preset.cableIdsToCut,
+        preset.name,
+        preset.cause,
+        preset.subsystemFaultMode,
+        preset.bgpConfig
+      );
       preset.cableIdsToCut.forEach((id) => globe.triggerShockwave(id));
       telemetryAudio.playCableCut();
       setTimeout(() => telemetryAudio.playRerouteChirp(), 260);
@@ -294,7 +316,7 @@ function initStaticControls(): void {
         selectedCorridorId = suggested.id;
       }
       syncUI();
-      announce(`Scenario activated: ${preset.name}`);
+      announce(`Scenario applied: ${preset.name}`);
     });
     scenarioList.appendChild(btn);
   }
@@ -324,6 +346,7 @@ function syncUI(): void {
   renderTraceroute();
   renderCorridorsTable();
   renderSeabedOtdrPanel();
+  renderRepairPanel();
   renderCablesList();
   renderEventsLog();
 }
@@ -340,17 +363,22 @@ function renderHeaderKPIs(): void {
     rttDelta > 30 ? 'danger' : rttDelta > 5 ? 'warn' : ''
   }`;
 
-  kpiSevered.textContent = String(s.severedCount + s.repairingCount);
-  kpiSevered.className = `kpi-value ${s.severedCount > 0 ? 'danger' : ''}`;
+  const totalFaulted = s.severedCount + s.degradedCount + s.repairingCount;
+  kpiSevered.textContent = `${s.severedCount} LOS / ${s.degradedCount} DEG`;
+  kpiSevered.className = `kpi-value ${
+    s.severedCount > 0 ? 'danger' : s.degradedCount > 0 ? 'warn' : ''
+  }`;
 
-  kpiRerouted.textContent = String(s.reroutedCount);
-  kpiRerouted.className = `kpi-value ${s.reroutedCount > 0 ? 'warn' : ''}`;
+  kpiRerouted.textContent = String(s.reroutedCount + s.partitionedCount);
+  kpiRerouted.className = `kpi-value ${
+    s.partitionedCount > 0 ? 'danger' : s.reroutedCount > 0 ? 'warn' : ''
+  }`;
 
   if (s.partitionedCount > 0) {
-    globalStatusPill.textContent = 'PARTITIONED';
+    globalStatusPill.textContent = 'BGP UNREACHABLE';
     globalStatusPill.className = 'status-pill status-critical';
-  } else if (s.severedCount > 0 || s.repairingCount > 0) {
-    globalStatusPill.textContent = 'REROUTE ACTIVE';
+  } else if (totalFaulted > 0 || s.reroutedCount > 0) {
+    globalStatusPill.textContent = 'DEGRADED / REROUTED';
     globalStatusPill.className = 'status-pill status-degraded';
   } else {
     globalStatusPill.textContent = 'CONVERGED';
@@ -373,19 +401,33 @@ function renderTraceroute(): void {
     traceRttEl.textContent = '-- ms';
     traceDeltaEl.textContent = '--';
     traceLossEl.textContent = '--';
-    traceHopsChain.textContent = 'Choose distinct source and destination hubs.';
+    bgpRibBox.textContent = 'Select distinct origin and destination CLS hubs.';
+    traceHopsChain.textContent = '';
     return;
   }
 
   traceStatusBadge.textContent = trace.status;
   traceStatusBadge.className = `badge badge-${trace.status.toLowerCase()}`;
 
-  if (trace.status === 'PARTITIONED') {
-    traceRttEl.textContent = 'UNREACHABLE';
-    traceDeltaEl.textContent = 'LOSS';
+  const srcMeta = STATION_ASN_MAP[trace.srcId];
+  const dstMeta = STATION_ASN_MAP[trace.dstId];
+
+  if (trace.status === 'POLICY_BLOCKED') {
+    traceRttEl.textContent = 'FILTERED';
+    traceDeltaEl.textContent = 'NO_EXPORT';
     traceLossEl.textContent = '100% / --';
+    bgpRibBox.textContent = `RFC 4271 Loc-RIB: NONE | Physical Path: ACTIVE | Rejected by AS37457 NO_EXPORT / Valley-Free export filter.`;
+    traceHopsChain.textContent = `Physical capacity exists between AS${srcMeta?.asn} and AS${dstMeta?.asn}, but BGP policy filtered all candidate advertisements.`;
+    return;
+  }
+
+  if (trace.status === 'PARTITIONED' || !trace.bgpRoute) {
+    traceRttEl.textContent = 'WITHDRAWN';
+    traceDeltaEl.textContent = 'LOS';
+    traceLossEl.textContent = '100% / --';
+    bgpRibBox.textContent = `RFC 4271 Loc-RIB: Route withdrawn (${dstMeta?.ipv4Prefix ?? ''}). Physical & BGP reachability lost.`;
     traceHopsChain.textContent =
-      'No viable optical path available. Dispatch a repair ship or restore a severed trunk.';
+      'All optical trunks or border router sessions on candidate paths are down.';
     return;
   }
 
@@ -394,6 +436,11 @@ function renderTraceroute(): void {
   traceDeltaEl.textContent =
     delta > 0.1 ? `+${delta.toFixed(1)} ms` : '0.0 ms';
   traceLossEl.textContent = `${trace.packetLossPct}% / ${trace.jitterMs}ms`;
+
+  const r = trace.bgpRoute;
+  const asPathStr = r.asPath.map((asn) => `AS${asn}`).join(' ');
+  const commStr = r.communities.join(' ');
+  bgpRibBox.textContent = `Prefix ${r.prefix} | LOCAL_PREF ${r.localPref} | MED ${r.med} | AS_PATH [${asPathStr}] | Comm: ${commStr}`;
 
   const pathLabels = trace.currentPath.map(
     (id) => stationById.get(id)?.city ?? id
@@ -409,7 +456,7 @@ function renderTraceroute(): void {
       segments.push(`[${cableCodes[i]}]`);
     }
   }
-  traceHopsChain.textContent = segments.join(' -> ');
+  traceHopsChain.textContent = `FIB Data Plane: ${segments.join(' -> ')}`;
 }
 
 function renderCorridorsTable(): void {
@@ -423,8 +470,8 @@ function renderCorridorsTable(): void {
 
     const delta = c.currentRttMs - c.baselineRttMs;
     const liveCell =
-      c.status === 'PARTITIONED'
-        ? '<span class="delta-bad">DOWN</span>'
+      c.status === 'PARTITIONED' || c.status === 'POLICY_BLOCKED'
+        ? `<span class="delta-bad">${c.status === 'POLICY_BLOCKED' ? 'POLICY' : 'DOWN'}</span>`
         : `${c.currentRttMs.toFixed(1)} ms${
             delta > 0.3
               ? `<span class="${delta > 40 ? 'delta-bad' : 'delta-up'}">+${delta.toFixed(0)}</span>`
@@ -472,91 +519,149 @@ function renderSeabedOtdrPanel(): void {
   const st = currentSnapshot.cables.get(inspectedCableId);
   if (!cable || !st) return;
 
-  otdrPfeEl.textContent = cable.isTerrestrial
-    ? 'TERRESTRIAL'
-    : st.cutState === 'active'
-    ? `±${st.pfeVoltageKv} kV`
-    : '0.0 kV (TRIP)';
-  otdrOsnrEl.textContent =
-    st.cutState === 'active'
-      ? `${st.osnrDb} dB (${st.repeaterCount} pods)`
-      : `0.0 dB (LOS)`;
+  const opt = st.optical;
+  const pfe = st.pfe;
+  const otdr = st.otdr;
+  const prov = st.provenance;
+  const seabed = st.seabedSample;
 
-  if (st.cutState === 'severed') {
-    otdrDepthEl.textContent = `${st.faultCause} · ${Math.abs(
-      st.faultDepthM ?? 0
-    )}m`;
-    btnOtdrAction.textContent = 'Dispatch Repair Ship';
+  otdrProvenanceBadge.textContent = `${prov.routeConfidence} · ${opt.fiberStandard} (${prov.fiberPairs} FP)`;
+
+  optFiberVal.textContent = `${opt.fiberAttenuationDbPerKm} dB/km (${opt.spanCount}x${opt.spanLengthKm}km)`;
+  optSpanVal.textContent = `${opt.spanLossDb} dB / +${opt.edfaGainDb} dB (NF ${opt.edfaNoiseFigureDb}dB)`;
+  otdrOsnrEl.textContent = opt.opticalCarrierUp
+    ? `${opt.gsnrDb} dB (ASE ${opt.osnrLinDb}dB)`
+    : `0.0 dB (LOS)`;
+  optQVal.textContent = opt.opticalCarrierUp
+    ? `Q ${opt.qFactorDb} dB (EOL +${opt.eolMarginDb}dB)`
+    : `Q 0.0 dB (BELOW FEC)`;
+  optBerVal.textContent = opt.opticalCarrierUp
+    ? `${opt.preFecBer} -> ${opt.postFecBer}`
+    : `5.0e-1 (LOF/LOS)`;
+  optDispVal.textContent = `${opt.chromaticDispersionPsNm.toLocaleString()} ps/nm · ${opt.pmdPs} ps`;
+
+  if (cable.isTerrestrial) {
+    otdrPfeEl.textContent = 'LOCAL AC/DC GRID';
+    pfeCurrentVal.textContent = `Terrestrial Duct (${st.repeaterCount} ILA)`;
+  } else if (pfe.mode === 'double-end-bipolar') {
+    otdrPfeEl.textContent = `+${pfe.terminalAVoltageKv} / ${pfe.terminalBVoltageKv} kV`;
+    pfeCurrentVal.textContent = `${pfe.lineCurrentAmps} A · ${pfe.conductorResistanceOhmKm} Ω/km (${pfe.totalWetPlantPowerKw} kW)`;
+  } else if (pfe.mode === 'single-end-reconfig') {
+    otdrPfeEl.textContent = `RECONFIG ${pfe.terminalAVoltageKv}/${pfe.terminalBVoltageKv} kV`;
+    pfeCurrentVal.textContent = `${pfe.lineCurrentAmps} A · 0V @ ${pfe.zeroVoltPositionKm}km`;
+  } else {
+    otdrPfeEl.textContent = '0.0 kV (HVDC TRIP)';
+    pfeCurrentVal.textContent = `0.00 A · R_tot ${pfe.totalCableResistanceOhm} Ω`;
+  }
+
+  if (st.cutState === 'severed' || st.cutState === 'degraded') {
+    otdrDepthEl.textContent = `${otdr.estimatedFaultDistanceKm} ±${otdr.uncertaintyPlusMinusKm} km (${otdr.confidencePct}%)`;
+    btnOtdrAction.textContent = 'Mobilize Repair Vessel';
     btnOtdrAction.className = 'cable-action-btn repair';
   } else if (st.cutState === 'repairing') {
-    otdrDepthEl.textContent = `${st.repairPhase?.toUpperCase()} · ${Math.round(
-      st.repairProgress * 100
-    )}%`;
-    btnOtdrAction.textContent = 'Complete Splice';
+    const plan = st.repairPlan;
+    otdrDepthEl.textContent = plan
+      ? `Step ${plan.currentStepIndex + 1}/15 · ETR ${plan.remainingHours}h`
+      : `${Math.round(st.repairProgress * 100)}%`;
+    btnOtdrAction.textContent = 'Complete Splice & Turn-Up';
     btnOtdrAction.className = 'cable-action-btn splice';
   } else {
-    otdrDepthEl.textContent = `Max ${cable.depthMaxM.toLocaleString()}m`;
-    btnOtdrAction.textContent = 'Sever System';
+    otdrDepthEl.textContent = `NOMINAL (Max ${cable.depthMaxM.toLocaleString()}m)`;
+    btnOtdrAction.textContent = 'Inject Fault';
     btnOtdrAction.className = 'cable-action-btn cut';
   }
 
+  otdrNotesBox.textContent = otdr.localizationNotes;
+
   renderSeabedAndOtdr(seabedOtdrCanvas, cable, st);
 
-  // Sync 3D Underwater ROV & Ocean-Floor Simulation Stage
+  // Sync 3D Underwater ROV & Ocean-Floor Simulation Stage with calculated physics
   subseaRov.updateInspection(cable, st);
   subseaCableTitle.textContent = `${cable.systemCode} — ${cable.name}`;
 
-  const absDepthM = Math.abs(st.faultDepthM ?? cable.depthMaxM ?? 2150);
-  // Hydrostatic pressure: P = rho * g * h (~0.01008 MPa per meter of seawater + 0.101 MPa atm)
+  const absDepthM = Math.abs(st.faultDepthM ?? seabed.depthM);
   const pressureMpa = 0.101 + absDepthM * 0.01008;
   const pressureBar = Math.round(pressureMpa * 10);
-  // Bottom temperature profile: warm in shallow shelf, ~1.4-2.4°C in bathypelagic/abyssal
-  const bottomTempC =
-    absDepthM < 250
-      ? 14.2 - (absDepthM / 250) * 8.5
-      : Math.max(1.3, 5.7 - ((absDepthM - 250) / 3800) * 4.2);
 
   subseaDepthVal.textContent = cable.isTerrestrial
-    ? 'Terrestrial Trench (2.5 m)'
-    : `${absDepthM.toLocaleString()} m (${
-        absDepthM > 4000
-          ? 'Abyssal'
-          : absDepthM > 1000
-          ? 'Bathypelagic'
-          : 'Continental Shelf'
-      })`;
+    ? `Terrestrial Conduit (${seabed.actualBurialDepthM} m trench)`
+    : `${absDepthM.toLocaleString()} m (${prov.maintenanceZone})`;
   subseaPressureVal.textContent = cable.isTerrestrial
-    ? '0.10 MPa (1.0 bar)'
-    : `${pressureMpa.toFixed(1)} MPa (${pressureBar} bar)`;
-  subseaTempVal.textContent = cable.isTerrestrial
-    ? '18.5 °C · Dry Conduit'
-    : `${bottomTempC.toFixed(1)} °C · 34.9 PSU`;
-
-  const armorType =
-    absDepthM < 1200
-      ? 'Double-Armored Rock Wire'
-      : absDepthM < 2800
-      ? 'Single-Armored Galvanized'
-      : 'Lightweight Deep-Sea (LW)';
-  subseaArmorVal.textContent = `${armorType} · ${st.repeaterCount} EDFA Pods`;
+    ? '0.10 MPa (Atmospheric)'
+    : `${pressureMpa.toFixed(1)} MPa (${pressureBar} bar) [Calc]`;
+  subseaTempVal.textContent = `${seabed.armorClass} · Burial ${seabed.actualBurialDepthM}m (Target ${seabed.targetBurialDepthM}m)`;
+  subseaArmorVal.textContent = `${seabed.sediment} · ${st.repeaterCount} EDFA Pods`;
 
   if (st.cutState === 'severed') {
-    subseaStatusBadge.textContent = `SEVERED · ${st.faultCause?.toUpperCase()} · PFE 0kV`;
+    subseaStatusBadge.textContent = `OPTICAL LOS · ${st.faultCause?.toUpperCase()}`;
     subseaStatusBadge.className = 'badge badge-partitioned';
-    btnSubseaCut.textContent = 'Deploy ROV & Repair Ship';
+    btnSubseaCut.textContent = 'Mobilize Repair Vessel';
+    btnSubseaCut.className = 'cable-action-btn repair';
+  } else if (st.cutState === 'degraded') {
+    subseaStatusBadge.textContent = `DEGRADED · ${st.pfe.mode.toUpperCase()} · Q=${opt.qFactorDb}dB`;
+    subseaStatusBadge.className = 'badge badge-rerouted';
+    btnSubseaCut.textContent = 'Mobilize Repair Vessel';
     btnSubseaCut.className = 'cable-action-btn repair';
   } else if (st.cutState === 'repairing') {
-    subseaStatusBadge.textContent = `ROV ${st.repairPhase?.toUpperCase()} (${Math.round(
+    const stepCode = st.repairPlan?.currentStep.code ?? 'REPAIR';
+    subseaStatusBadge.textContent = `${stepCode} (${Math.round(
       st.repairProgress * 100
     )}%)`;
     subseaStatusBadge.className = 'badge badge-rerouted';
-    btnSubseaCut.textContent = 'Complete Optical Splice';
+    btnSubseaCut.textContent = 'Complete Splice';
     btnSubseaCut.className = 'cable-action-btn splice';
   } else {
-    subseaStatusBadge.textContent = `INTACT · PFE ±${st.pfeVoltageKv}kV · ${st.osnrDb}dB`;
+    subseaStatusBadge.textContent = `CARRIER UP · GSNR ${opt.gsnrDb}dB · Q ${opt.qFactorDb}dB`;
     subseaStatusBadge.className = 'badge badge-optimal';
-    btnSubseaCut.textContent = 'Sever on 3D Seafloor';
+    btnSubseaCut.textContent = 'Inject Fault';
     btnSubseaCut.className = 'cable-action-btn cut';
+  }
+}
+
+function renderRepairPanel(): void {
+  const cable = SUBSEA_CABLES.find((c) => c.id === inspectedCableId);
+  const st = currentSnapshot.cables.get(inspectedCableId);
+  if (!cable || !st) return;
+
+  const coord =
+    st.cutCoord ?? cable.waypoints[Math.floor(cable.waypoints.length / 2)];
+  const plan =
+    st.repairPlan ??
+    computeSubseaRepairPlan(
+      cable,
+      coord,
+      st.cutState === 'repairing' ? st.repairProgress : 0
+    );
+
+  const stateTag =
+    st.cutState === 'repairing'
+      ? `ACTIVE OPERATION (${plan.elapsedHours}h / ${plan.totalEstimatedHours}h elapsed)`
+      : st.cutState === 'severed' || st.cutState === 'degraded'
+      ? `AWAITING DISPATCH (Est. Total Duration: ${plan.totalEstimatedHours} hours)`
+      : `STANDBY ENGINEERING ESTIMATE (If faulted at midpoint: ${plan.totalEstimatedHours} hours)`;
+
+  repairSummaryBox.textContent = `${stateTag} | Assigned Vessel: ${plan.vessel.name} (${plan.vessel.operator}, Depot: ${plan.vessel.depotCity}, ${plan.transitDistanceNm} NM) | Depth: ${plan.waterDepthM}m | Burial: ${plan.burialDepthM}m | Sea State: Beaufort ${plan.seaStateBeaufort} (${plan.significantWaveHeightM}m) | Method: ${plan.recoveryMethod} | Spare Bight: ${plan.spareCableInsertedKm} km (${plan.universalJointCount}x UJ)`;
+
+  repairStepsList.innerHTML = '';
+  for (const step of plan.steps) {
+    const li = document.createElement('li');
+    const isCurrent =
+      st.cutState === 'repairing' &&
+      step.stepNumber === plan.currentStep.stepNumber;
+    const isDone =
+      st.cutState === 'repairing' &&
+      step.stepNumber < plan.currentStep.stepNumber;
+    li.className = `event-item ${
+      isCurrent ? 'warning' : isDone ? 'recovery' : 'info'
+    }`;
+    li.innerHTML = `
+      <div class="event-head">
+        <span class="event-code">${escapeHtml(step.code)} · ${escapeHtml(step.label)}</span>
+        <span>${step.durationHours}h (Cum. ${step.cumulativeHours}h)</span>
+      </div>
+      <div class="event-msg">${escapeHtml(step.engineeringDetail)}</div>
+    `;
+    repairStepsList.appendChild(li);
   }
 }
 
@@ -569,14 +674,16 @@ function renderCablesList(): void {
     return (
       c.name.toLowerCase().includes(query) ||
       c.systemCode.toLowerCase().includes(query) ||
-      c.corridorTag.toLowerCase().includes(query)
+      c.corridorTag.toLowerCase().includes(query) ||
+      c.owners.toLowerCase().includes(query)
     );
   });
 
   filtered.sort((a, b) => {
     const sa = currentSnapshot.cables.get(a.id)?.cutState ?? 'active';
     const sb = currentSnapshot.cables.get(b.id)?.cutState ?? 'active';
-    const weight = (s: string) => (s === 'severed' ? 0 : s === 'repairing' ? 1 : 2);
+    const weight = (s: string) =>
+      s === 'severed' ? 0 : s === 'degraded' ? 1 : s === 'repairing' ? 2 : 3;
     return weight(sa) - weight(sb);
   });
 
@@ -589,22 +696,24 @@ function renderCablesList(): void {
     const utilClass =
       st.utilization >= 0.9 ? 'over' : st.utilization >= 0.68 ? 'high' : '';
 
-    let statusText = `${utilPct}% load (${st.carriedTbps}/${cable.capacityTbps} Tbps) · PFE ±${st.pfeVoltageKv}kV`;
+    let statusText = `${utilPct}% (${st.carriedTbps}/${cable.capacityTbps} Tbps) · GSNR ${st.osnrDb}dB · Q ${st.optical.qFactorDb}dB`;
     if (st.cutState === 'severed') {
-      statusText = `${st.faultCause ?? 'CUT'} @ ${st.faultDistanceKm}km (${Math.abs(
+      statusText = `LOS (${st.faultCause}) @ ${st.faultDistanceKm}±${st.faultUncertaintyKm}km (${Math.abs(
         st.faultDepthM ?? cable.depthMaxM
       )}m)`;
+    } else if (st.cutState === 'degraded') {
+      statusText = `DEGRADED (${st.faultCause}) · ${st.pfe.mode} · Q=${st.optical.qFactorDb}dB`;
     } else if (st.cutState === 'repairing') {
-      statusText = `${st.repairShip} · ${st.repairPhase?.toUpperCase()} ${Math.round(
-        st.repairProgress * 100
-      )}%`;
+      statusText = `${st.repairShip} · ${st.repairPlan?.currentStep.code ?? 'REPAIR'} (${
+        st.repairPlan?.remainingHours ?? 0
+      }h rem)`;
     }
 
     card.innerHTML = `
       <div class="cable-card-top">
         <div>
           <div class="cable-name">${escapeHtml(cable.name)}</div>
-          <div class="cable-meta">${escapeHtml(cable.systemCode)} · ${cable.lengthKm.toLocaleString()} km · ${st.repeaterCount} EDFA pods</div>
+          <div class="cable-meta">${escapeHtml(cable.systemCode)} · RFS ${cable.rfsYear} · ${cable.lengthKm.toLocaleString()} km · ${st.repeaterCount} EDFA · ${st.provenance.routeConfidence}</div>
         </div>
       </div>
       <div class="util-bar" aria-hidden="true">
@@ -626,7 +735,7 @@ function renderCablesList(): void {
     const inspectBtn = document.createElement('button');
     inspectBtn.type = 'button';
     inspectBtn.className = 'cable-action-btn';
-    inspectBtn.textContent = 'Dive';
+    inspectBtn.textContent = 'Inspect';
     inspectBtn.addEventListener('click', () => {
       inspectedCableId = cable.id;
       otdrCableSelect.value = cable.id;
@@ -634,6 +743,7 @@ function renderCablesList(): void {
         st.cutCoord ?? cable.waypoints[Math.floor(cable.waypoints.length / 2)];
       globe.diveTo(target[0], target[1]);
       renderSeabedOtdrPanel();
+      renderRepairPanel();
     });
     actionWrap.appendChild(inspectBtn);
 
@@ -641,7 +751,7 @@ function renderCablesList(): void {
       const cutBtn = document.createElement('button');
       cutBtn.type = 'button';
       cutBtn.className = 'cable-action-btn cut';
-      cutBtn.textContent = 'Sever';
+      cutBtn.textContent = 'Fault';
       cutBtn.addEventListener('click', () => {
         activeScenarioId = null;
         inspectedCableId = cable.id;
@@ -654,11 +764,11 @@ function renderCablesList(): void {
         syncUI();
       });
       actionWrap.appendChild(cutBtn);
-    } else if (st.cutState === 'severed') {
+    } else if (st.cutState === 'severed' || st.cutState === 'degraded') {
       const shipBtn = document.createElement('button');
       shipBtn.type = 'button';
       shipBtn.className = 'cable-action-btn repair';
-      shipBtn.textContent = 'Dispatch Ship';
+      shipBtn.textContent = 'Mobilize Ship';
       shipBtn.addEventListener('click', () => {
         engine.dispatchRepairShip(cable.id);
         telemetryAudio.playRerouteChirp();
@@ -667,7 +777,7 @@ function renderCablesList(): void {
       const spliceBtn = document.createElement('button');
       spliceBtn.type = 'button';
       spliceBtn.className = 'cable-action-btn splice';
-      spliceBtn.textContent = 'Splice';
+      spliceBtn.textContent = 'Restore';
       spliceBtn.addEventListener('click', () => {
         engine.restoreCable(cable.id);
         telemetryAudio.playRepairSplice();
@@ -716,13 +826,13 @@ function renderTooltip(info: HoverInfo | null): void {
 
   if (info.kind === 'station' && info.station) {
     const s = info.station;
+    const asMeta = STATION_ASN_MAP[s.id];
     tooltipEl.innerHTML = `
-      <div class="tooltip-title">${escapeHtml(s.name)}</div>
-      <div class="tooltip-sub">${escapeHtml(s.city)}, ${escapeHtml(s.country)} · Tier ${s.tier}</div>
-      <div class="tooltip-meta">IXPs: ${escapeHtml(s.ixps.join(', '))}</div>
-      <div class="tooltip-meta">Grid Power: ${s.powerMW} MW</div>
-      <div class="tooltip-hint">Click to set traceroute ${
-        nextStationTarget === 'src' ? 'source' : 'destination'
+      <div class="tooltip-title">${escapeHtml(s.name)} (AS${asMeta?.asn ?? 65000})</div>
+      <div class="tooltip-sub">${escapeHtml(s.city)}, ${escapeHtml(s.country)} · ${escapeHtml(asMeta?.asName ?? '')}</div>
+      <div class="tooltip-meta">Prefix: ${escapeHtml(asMeta?.ipv4Prefix ?? '')} · IXPs: ${escapeHtml(s.ixps.join(', '))}</div>
+      <div class="tooltip-hint">Click to set BGP inspection ${
+        nextStationTarget === 'src' ? 'origin' : 'destination'
       }</div>
     `;
   } else if (info.kind === 'cable' && info.cable && info.runtime) {
@@ -730,31 +840,26 @@ function renderTooltip(info: HoverInfo | null): void {
     const r = info.runtime;
     const depthLabel =
       info.depthM && info.depthM < 0
-        ? `Seabed ${Math.abs(info.depthM).toLocaleString()}m`
-        : `Terrestrial`;
+        ? `Bathymetry ${Math.abs(info.depthM).toLocaleString()}m (Est.)`
+        : `Terrestrial Conduit`;
     const statusLine =
       r.cutState === 'severed'
-        ? `SEVERED (${r.faultCause}) · OTDR ${r.faultDistanceKm} km · PFE 0 kV`
+        ? `OPTICAL LOS (${r.faultCause}) · Est. ${r.faultDistanceKm}±${r.faultUncertaintyKm} km`
+        : r.cutState === 'degraded'
+        ? `DEGRADED (${r.faultCause}) · PFE ${r.pfe.mode} · Q=${r.optical.qFactorDb} dB`
         : r.cutState === 'repairing'
-        ? `${r.repairShip} · ${r.repairPhase?.toUpperCase()} (${Math.round(
-            r.repairProgress * 100
-          )}%)`
-        : `LOAD ${Math.round(r.utilization * 100)}% (${r.carriedTbps}/${
+        ? `${r.repairShip} · ${r.repairPlan?.currentStep.code ?? 'REPAIR'} (${
+            r.repairPlan?.remainingHours ?? 0
+          }h rem)`
+        : `Load ${Math.round(r.utilization * 100)}% (${r.carriedTbps}/${
             c.capacityTbps
-          } Tbps) · PFE ±${r.pfeVoltageKv}kV · OSNR ${r.osnrDb}dB`;
-
-    const actionHint =
-      r.cutState === 'active'
-        ? 'Click cable to sever at this underwater point'
-        : r.cutState === 'severed'
-        ? 'Click to dispatch cable repair vessel + ROV'
-        : 'Click to complete optical splice';
+          } Tbps) · GSNR ${r.osnrDb}dB · Q ${r.optical.qFactorDb}dB`;
 
     tooltipEl.innerHTML = `
       <div class="tooltip-title">${escapeHtml(c.name)}</div>
       <div class="tooltip-sub">${escapeHtml(c.systemCode)} · ${c.lengthKm.toLocaleString()} km · ${depthLabel}</div>
       <div class="tooltip-meta">${escapeHtml(statusLine)}</div>
-      <div class="tooltip-hint">${escapeHtml(actionHint)}</div>
+      <div class="tooltip-meta">Provenance: ${r.provenance.routeConfidence} (${escapeHtml(c.owners)})</div>
     `;
   }
 
@@ -794,6 +899,8 @@ function setupTabs(): void {
 
     if (tab.id === 'tab-seabed') {
       requestAnimationFrame(() => renderSeabedOtdrPanel());
+    } else if (tab.id === 'tab-repair') {
+      requestAnimationFrame(() => renderRepairPanel());
     }
 
     if (moveFocus) tab.focus();
@@ -830,7 +937,7 @@ btnAudio.addEventListener('click', () => {
   const next = !telemetryAudio.isEnabled();
   telemetryAudio.setEnabled(next);
   btnAudio.setAttribute('aria-pressed', String(next));
-  audioLabel.textContent = next ? 'Audio On' : 'Muted';
+  audioLabel.textContent = next ? 'Audio: On' : 'Audio: Muted';
   if (next) telemetryAudio.playHoverTick();
 });
 
@@ -839,7 +946,7 @@ btnPauseMotion.addEventListener('click', () => {
   globe.setMotionPaused(motionPaused);
   subseaRov.setMotionPaused(motionPaused);
   const labelSpan = btnPauseMotion.querySelector('span')!;
-  labelSpan.textContent = motionPaused ? 'Play' : 'Pause';
+  labelSpan.textContent = motionPaused ? 'Resume' : 'Pause';
 });
 
 function setViewMode(mode: 'split' | 'subsea' | 'globe'): void {
@@ -848,7 +955,7 @@ function setViewMode(mode: 'split' | 'subsea' | 'globe'): void {
     btn.classList.toggle('active', btn.dataset.viewMode === mode);
   });
   subseaExpandLabel.textContent =
-    mode === 'subsea' ? 'Split Globe + Floor' : 'Expand 3D Floor';
+    mode === 'subsea' ? 'Split View' : 'Maximize 3D';
 }
 
 viewModeButtons.forEach((btn) => {
@@ -885,8 +992,8 @@ btnRestoreAll.addEventListener('click', () => {
   const restored = engine.restoreAll();
   if (restored > 0) {
     telemetryAudio.playRepairSplice();
-    announce(`Restored ${restored} severed cables.`);
   }
+  announce('Restored deterministic network baseline.');
   syncUI();
 });
 
@@ -928,7 +1035,7 @@ btnSwapTrace.addEventListener('click', () => {
 
 oceanOpacitySlider.addEventListener('input', () => {
   const pct = Number(oceanOpacitySlider.value);
-  oceanOpacityVal.textContent = pct === 0 ? 'X-Ray Seabed' : `${pct}% Water`;
+  oceanOpacityVal.textContent = pct === 0 ? 'Bathymetry Only' : `${pct}% Surface`;
   globe.setOceanOpacity(pct / 100);
 });
 
@@ -952,6 +1059,7 @@ chkOrbit.addEventListener('change', () => globe.setAutoOrbit(chkOrbit.checked));
 otdrCableSelect.addEventListener('change', () => {
   inspectedCableId = otdrCableSelect.value;
   renderSeabedOtdrPanel();
+  renderRepairPanel();
 });
 
 btnDiveCable.addEventListener('click', () => {
@@ -967,10 +1075,25 @@ btnOtdrAction.addEventListener('click', () => {
   const st = currentSnapshot.cables.get(inspectedCableId);
   if (!st) return;
   if (st.cutState === 'active') {
-    engine.severCable(inspectedCableId);
+    const selectedCause = faultCauseSelect.value as FaultCause | 'Auto';
+    const faultMode =
+      selectedCause === 'PFE Shunt Fault'
+        ? 'shunt-fault'
+        : selectedCause === 'Repeater Pump Failure'
+        ? 'repeater-failure'
+        : selectedCause === 'Shore PFE Terminal Outage'
+        ? 'single-pfe-outage'
+        : undefined;
+    engine.severCable(
+      inspectedCableId,
+      undefined,
+      0.5,
+      selectedCause === 'Auto' ? undefined : selectedCause,
+      faultMode
+    );
     globe.triggerShockwave(inspectedCableId);
     telemetryAudio.playCableCut();
-  } else if (st.cutState === 'severed') {
+  } else if (st.cutState === 'severed' || st.cutState === 'degraded') {
     engine.dispatchRepairShip(inspectedCableId);
     telemetryAudio.playRerouteChirp();
   } else {

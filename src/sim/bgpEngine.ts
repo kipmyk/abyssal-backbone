@@ -67,8 +67,8 @@ export const STATION_ASN_MAP: Record<
   string,
   { asn: number; asName: string; tier: 1 | 2; ipv4Prefix: string }
 > = {
-  mombasa:    { asn: 30844, asName: 'LIQUID-EA-AS',     tier: 2, ipv4Prefix: '197.155.0.0/16' },
-  djibouti:   { asn: 37054, asName: 'DJIBOUTI-IX-AS',   tier: 2, ipv4Prefix: '196.201.0.0/16' },
+  mombasa:    { asn: 30844, asName: 'LIQUID-EA-AS',     tier: 1, ipv4Prefix: '197.155.0.0/16' },
+  djibouti:   { asn: 37054, asName: 'DJIBOUTI-IX-AS',   tier: 1, ipv4Prefix: '196.201.0.0/16' },
   mtunzini:   { asn: 37100, asName: 'SEACOM-AS',        tier: 2, ipv4Prefix: '105.16.0.0/12' },
   capetown:   { asn: 37457, asName: 'TELKOM-ZA-AS',     tier: 2, ipv4Prefix: '41.0.0.0/11' },
   luanda:     { asn: 37468, asName: 'ANGOLA-CABLES',    tier: 2, ipv4Prefix: '102.214.0.0/16' },
@@ -195,20 +195,26 @@ function evaluateBgpPolicy(
   }
 
   let rel: AsRelationship = 'peer';
-  if (rxMeta.tier === 1 && txMeta.tier === 2) rel = 'customer';
-  else if (rxMeta.tier === 2 && txMeta.tier === 1) rel = 'provider';
+  // Gao-Rexford Valley-Free Principle:
+  // A Tier-2 AS is only a 'customer' (LOCAL_PREF 200) for prefixes it originates itself (asPath.length === 1).
+  // When a Tier-2 AS re-advertises a multi-hop transit path, it is treated as backup regional transit (LOCAL_PREF 130)
+  // unless a BGP Route Leak anomaly is active.
+  const isOriginAnnouncement = adv.asPath.length === 1;
+  if (rxMeta.tier === 1 && txMeta.tier === 2) {
+    rel = isOriginAnnouncement ? 'customer' : 'provider';
+  } else if (rxMeta.tier === 2 && txMeta.tier === 1) {
+    rel = 'provider';
+  }
 
-  // Default LOCAL_PREF by commercial relationship + cable capacity class
-  // Higher-capacity modern SDM cables carry lower MED and preferred peering engineering communities
   let localPref =
-    rel === 'customer' ? 200 : rel === 'peer' ? 150 : 120;
+    rel === 'customer' ? 200 : rel === 'peer' ? 150 : 135;
 
-  // Older legacy low-capacity systems (e.g. WACS-S/M 15 Tbps, SEACOM 24 Tbps, FALCON 32 Tbps)
-  // are configured with backup LOCAL_PREF (110) so primary SDM trunks (Equiano, 2Africa, PEACE) win
-  if (cable.capacityTbps <= 32) {
+  // Modern high-capacity SDM trunks (>=140 Tbps) carry preferred traffic engineering communities (+15 LOCAL_PREF)
+  // while legacy low-capacity systems (<=36 Tbps) are engineered as backup paths (-20 LOCAL_PREF)
+  if (cable.capacityTbps <= 36) {
     localPref -= 20;
-  } else if (cable.capacityTbps >= 160) {
-    localPref += 10;
+  } else if (cable.capacityTbps >= 140) {
+    localPref += 15;
   }
 
   // BGP Route Leak Anomaly:
@@ -417,3 +423,4 @@ export function convergeBgpControlPlane(
     physicallyReachablePairs,
   };
 }
+

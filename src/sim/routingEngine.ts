@@ -5,45 +5,38 @@ import {
 import {
   CORRIDOR_DEFINITIONS,
   LANDING_STATIONS,
-  REPAIR_SHIPS,
   SUBSEA_CABLES,
 } from '../data/networkData';
+import {
+  getCableProvenance,
+  sampleCableEngineeringAtPoint,
+} from '../data/provenance';
 import type {
   CableRuntimeState,
   CorridorStatus,
   FaultCause,
   NetworkEvent,
   NetworkSnapshot,
-  RepairPhase,
   SubseaCable,
   TrafficCorridor,
 } from '../types/network';
+import {
+  type BgpControlPlaneConfig,
+  convergeBgpControlPlane,
+} from './bgpEngine';
+import { computeOpticalPerformance } from './opticalEngine';
+import { computeOtdrAnalysis } from './otdrEngine';
+import { type SubsystemFaultMode, computePfeState } from './pfeEngine';
+import { computeSubseaRepairPlan } from './repairEngine';
 
-// Speed of light in silica optical fiber (n ≈ 1.468): ~204,190 km/s -> 204.19 km/ms
-const FIBER_SPEED_KM_PER_MS = 204.19;
-// Per-hop OADM / repeater / router forwarding overhead (one-way ms)
-const HOP_OVERHEAD_ONE_WAY_MS = 1.4;
+// Speed of light in silica optical fiber (group index n_g ≈ 1.4682 at 1550 nm): 204.19 km/ms
+export const FIBER_SPEED_KM_PER_MS = 204.19;
+// Per-CLS OADM / coherent transponder / border router switching delay (one-way ms)
+const CLS_FORWARDING_DELAY_MS = 1.4;
 
 function computeCableBaseRttMs(cable: SubseaCable): number {
-  const oneWayMs = cable.lengthKm / FIBER_SPEED_KM_PER_MS + HOP_OVERHEAD_ONE_WAY_MS;
+  const oneWayMs = cable.lengthKm / FIBER_SPEED_KM_PER_MS + CLS_FORWARDING_DELAY_MS;
   return Number((oneWayMs * 2).toFixed(1));
-}
-
-function computeRepeaterCount(cable: SubseaCable): number {
-  return cable.isTerrestrial
-    ? Math.max(1, Math.floor(cable.lengthKm / 85))
-    : Math.max(1, Math.floor(cable.lengthKm / 95));
-}
-
-function computeNominalPfeKv(cable: SubseaCable, repeaters: number): number {
-  if (cable.isTerrestrial) return 0;
-  return Number(Math.min(14.8, 1.6 + repeaters * 0.145).toFixed(1));
-}
-
-function computeNominalOsnrDb(repeaters: number): number {
-  return Number(
-    Math.max(14.2, 23.4 - Math.log10(Math.max(1, repeaters)) * 3.2).toFixed(1)
-  );
 }
 
 function nowTimestamp(): string {
@@ -58,41 +51,20 @@ export class RoutingEngine {
     string,
     { path: string[]; cables: string[]; rttMs: number }
   >();
-  private baselineLoads = new Map<string, number>();
   private events: NetworkEvent[] = [];
   private eventSeq = 1;
   private customSrcId: string | null = 'mombasa';
   private customDstId: string | null = 'marseille';
   private selectedFaultCause: FaultCause | 'Auto' = 'Auto';
-  private shipCounter = 0;
+  private bgpConfig: BgpControlPlaneConfig = {};
 
   constructor() {
     for (const cable of SUBSEA_CABLES) {
       this.cableMap.set(cable.id, cable);
-      const baseLatencyMs = computeCableBaseRttMs(cable);
-      const repeaterCount = computeRepeaterCount(cable);
-      this.runtime.set(cable.id, {
-        id: cable.id,
-        cutState: 'active',
-        cutCoord: null,
-        cutProgressT: 0.5,
-        faultCause: null,
-        faultDistanceKm: null,
-        faultDepthM: null,
-        repairProgress: 0,
-        repairPhase: null,
-        repairShip: null,
-        utilization: 0,
-        carriedTbps: 0,
-        effectiveLatencyMs: baseLatencyMs,
-        baseLatencyMs,
-        pfeVoltageKv: computeNominalPfeKv(cable, repeaterCount),
-        repeaterCount,
-        osnrDb: computeNominalOsnrDb(repeaterCount),
-      });
+      this.runtime.set(cable.id, this.buildCableState(cable, 'none', 0.5, null));
     }
 
-    // Compute initial healthy baseline paths with sequential load-aware routing
+    // Record converged baseline paths
     const initial = this.computeSnapshot();
     for (const c of initial.corridors) {
       this.baselinePaths.set(c.id, {
@@ -101,15 +73,97 @@ export class RoutingEngine {
         rttMs: c.currentRttMs,
       });
     }
-    for (const [id, st] of initial.cables) {
-      this.baselineLoads.set(id, st.carriedTbps);
-    }
 
     this.pushEvent(
       'info',
-      'BGP-INIT',
-      `Converged ${SUBSEA_CABLES.length} optical systems across ${LANDING_STATIONS.length} CLS hubs; PFE & EDFA repeaters nominal.`
+      'BGP-CONVERGED',
+      `RFC 4271 BGP-4 RIBs converged across ${LANDING_STATIONS.length} AS border routers and ${SUBSEA_CABLES.length} optical trunks.`
     );
+  }
+
+  private buildCableState(
+    cable: SubseaCable,
+    faultMode: SubsystemFaultMode,
+    progressT: number,
+    faultCause: FaultCause | null,
+    cutCoord: [number, number] | null = null
+  ): CableRuntimeState {
+    const baseLatencyMs = computeCableBaseRttMs(cable);
+    const midCoord =
+      cutCoord ?? cable.waypoints[Math.floor(cable.waypoints.length / 2)];
+    const seabedSample = sampleCableEngineeringAtPoint(
+      cable,
+      midCoord[0],
+      midCoord[1]
+    );
+    const provenance = getCableProvenance(cable);
+
+    // 1. Evaluate nominal repeater count from ITU-T optical model
+    const baseOptical = computeOpticalPerformance(cable);
+    const repeaterCount = baseOptical.repeaterCount;
+
+    // 2. Evaluate Submarine Constant-Current PFE Electrical State
+    const pfe = computePfeState(cable, repeaterCount, faultMode, progressT);
+
+    // 3. Evaluate Optical Transmission Performance (coupling PFE unpowered repeaters into EDFA chain)
+    const severedOptical =
+      faultMode === 'complete-cut' || faultMode === 'optical-only-cut';
+    const degradedRepeaters = faultMode === 'repeater-failure' ? 2 : 0;
+    const optical = computeOpticalPerformance(cable, {
+      severed: severedOptical,
+      unpoweredRepeaters: pfe.unpoweredRepeaterCount,
+      degradedRepeaters,
+    });
+
+    // 4. Evaluate C-OTDR / LME / PFE Bridge Fault Localization & Uncertainty
+    const otdr = computeOtdrAnalysis(
+      cable,
+      repeaterCount,
+      faultMode,
+      progressT
+    );
+
+    const isDown = !optical.opticalCarrierUp;
+    const cutState: CableRuntimeState['cutState'] = isDown
+      ? 'severed'
+      : faultMode !== 'none'
+      ? 'degraded'
+      : 'active';
+
+    const pfeDisplayKv =
+      pfe.mode === 'double-end-bipolar'
+        ? pfe.terminalAVoltageKv
+        : pfe.mode === 'single-end-reconfig'
+        ? Math.max(Math.abs(pfe.terminalAVoltageKv), Math.abs(pfe.terminalBVoltageKv))
+        : 0;
+
+    return {
+      id: cable.id,
+      cutState,
+      subsystemFaultMode: faultMode,
+      cutCoord: faultMode !== 'none' ? midCoord : null,
+      cutProgressT: progressT,
+      faultCause,
+      faultDistanceKm: otdr.estimatedFaultDistanceKm,
+      faultUncertaintyKm: otdr.uncertaintyPlusMinusKm,
+      faultDepthM: faultMode !== 'none' ? seabedSample.depthM : null,
+      repairProgress: 0,
+      repairPhase: null,
+      repairShip: null,
+      utilization: 0,
+      carriedTbps: 0,
+      effectiveLatencyMs: isDown ? Infinity : baseLatencyMs,
+      baseLatencyMs,
+      pfeVoltageKv: pfeDisplayKv,
+      repeaterCount,
+      osnrDb: optical.gsnrDb,
+      optical,
+      pfe,
+      otdr,
+      seabedSample,
+      provenance,
+      repairPlan: null,
+    };
   }
 
   public setSelectedFaultCause(cause: FaultCause | 'Auto'): void {
@@ -118,6 +172,14 @@ export class RoutingEngine {
 
   public getSelectedFaultCause(): FaultCause | 'Auto' {
     return this.selectedFaultCause;
+  }
+
+  public setBgpConfig(config: BgpControlPlaneConfig): void {
+    this.bgpConfig = { ...config };
+  }
+
+  public getBgpConfig(): BgpControlPlaneConfig {
+    return this.bgpConfig;
   }
 
   public getEvents(): NetworkEvent[] {
@@ -145,8 +207,8 @@ export class RoutingEngine {
       code,
       message,
     });
-    if (this.events.length > 70) {
-      this.events.length = 70;
+    if (this.events.length > 80) {
+      this.events.length = 80;
     }
   }
 
@@ -154,11 +216,12 @@ export class RoutingEngine {
     cableId: string,
     cutCoord?: [number, number],
     cutProgressT = 0.5,
-    overrideCause?: FaultCause
+    overrideCause?: FaultCause,
+    overrideFaultMode?: SubsystemFaultMode
   ): boolean {
     const cable = this.cableMap.get(cableId);
-    const state = this.runtime.get(cableId);
-    if (!cable || !state || state.cutState === 'severed') return false;
+    const prevState = this.runtime.get(cableId);
+    if (!cable || !prevState || prevState.cutState === 'severed') return false;
 
     const midIdx = Math.floor(cable.waypoints.length / 2);
     const resolvedCoord = cutCoord ?? cable.waypoints[midIdx];
@@ -174,44 +237,65 @@ export class RoutingEngine {
         ? 'Anchor Drag'
         : classifyHazardAtCoord(resolvedCoord[0], resolvedCoord[1], depthM));
 
-    const distKm = Number((cable.lengthKm * cutProgressT).toFixed(1));
+    // Map FaultCause to physical subsystem fault mode unless explicitly overridden
+    const faultMode: SubsystemFaultMode =
+      overrideFaultMode ??
+      (cause === 'Repeater Pump Failure'
+        ? 'repeater-failure'
+        : cause === 'Shore PFE Terminal Outage'
+        ? 'single-pfe-outage'
+        : 'complete-cut');
 
-    state.cutState = 'severed';
-    state.cutCoord = resolvedCoord;
-    state.cutProgressT = cutProgressT;
-    state.faultCause = cause;
-    state.faultDistanceKm = distKm;
-    state.faultDepthM = depthM;
-    state.repairProgress = 0;
-    state.repairPhase = null;
-    state.repairShip = null;
-    state.pfeVoltageKv = 0;
-    state.osnrDb = 0;
-
-    this.pushEvent(
-      'critical',
-      'OTDR-LOS',
-      `${cable.systemCode}: ${cause} at ${distKm.toLocaleString()} km (${Math.abs(depthM).toLocaleString()}m depth) — PFE tripped, ${cable.capacityTbps} Tbps offline.`
+    const nextState = this.buildCableState(
+      cable,
+      faultMode,
+      cutProgressT,
+      cause,
+      resolvedCoord
     );
+    this.runtime.set(cableId, nextState);
+
+    if (nextState.cutState === 'severed') {
+      this.pushEvent(
+        'critical',
+        'OPT-LINK-DOWN',
+        `${cable.systemCode}: Cable fault detected (${cause}) at est. ${nextState.faultDistanceKm} km (±${nextState.faultUncertaintyKm} km, ${Math.abs(depthM)}m depth). Optical link unavailable; BGP routes withdrawn.`
+      );
+    } else {
+      this.pushEvent(
+        'warning',
+        'PFE-RECONFIG',
+        `${cable.systemCode}: ${cause} at est. ${nextState.faultDistanceKm} km (±${nextState.faultUncertaintyKm} km). PFE reconfigured (${nextState.pfe.mode}); optical carrier remains UP (Q=${nextState.optical.qFactorDb} dB, GSNR=${nextState.osnrDb} dB).`
+      );
+    }
     return true;
   }
 
   public dispatchRepairShip(cableId: string): boolean {
     const cable = this.cableMap.get(cableId);
     const state = this.runtime.get(cableId);
-    if (!cable || !state || state.cutState !== 'severed') return false;
+    if (
+      !cable ||
+      !state ||
+      (state.cutState !== 'severed' && state.cutState !== 'degraded')
+    ) {
+      return false;
+    }
 
-    const ship = REPAIR_SHIPS[this.shipCounter % REPAIR_SHIPS.length];
-    this.shipCounter++;
+    const faultCoord =
+      state.cutCoord ?? cable.waypoints[Math.floor(cable.waypoints.length / 2)];
+    const plan = computeSubseaRepairPlan(cable, faultCoord, 0.04);
+
     state.cutState = 'repairing';
-    state.repairProgress = 0.02;
-    state.repairPhase = 'steaming';
-    state.repairShip = ship;
+    state.repairProgress = 0.04;
+    state.repairPhase = plan.currentStep.legacyPhase;
+    state.repairShip = plan.vessel.name;
+    state.repairPlan = plan;
 
     this.pushEvent(
       'warning',
-      'CS-DISPATCH',
-      `${ship} steaming to ${cable.systemCode} fault (${Math.abs(state.faultDepthM ?? cable.depthMaxM).toLocaleString()}m seabed).`
+      'VESSEL-MOBILIZED',
+      `${plan.vessel.name} (${plan.vessel.depotCity}) mobilized for ${cable.systemCode} (${plan.transitDistanceNm} NM transit, ${plan.waterDepthM}m depth, ${plan.recoveryMethod}, ETR ${plan.totalEstimatedHours}h).`
     );
     return true;
   }
@@ -219,24 +303,18 @@ export class RoutingEngine {
   public restoreCable(cableId: string, silent = false): boolean {
     const cable = this.cableMap.get(cableId);
     const state = this.runtime.get(cableId);
-    if (!cable || !state || state.cutState === 'active') return false;
+    if (!cable || !state || (state.cutState === 'active' && state.subsystemFaultMode === 'none')) {
+      return false;
+    }
 
-    state.cutState = 'active';
-    state.cutCoord = null;
-    state.faultCause = null;
-    state.faultDistanceKm = null;
-    state.faultDepthM = null;
-    state.repairProgress = 0;
-    state.repairPhase = null;
-    state.repairShip = null;
-    state.pfeVoltageKv = computeNominalPfeKv(cable, state.repeaterCount);
-    state.osnrDb = computeNominalOsnrDb(state.repeaterCount);
+    const restoredState = this.buildCableState(cable, 'none', 0.5, null);
+    this.runtime.set(cableId, restoredState);
 
     if (!silent) {
       this.pushEvent(
         'recovery',
-        'PFE-LOCK',
-        `${cable.systemCode} spliced & PFE ±${state.pfeVoltageKv} kV restored — OSNR ${state.osnrDb} dB nominal.`
+        'SERVICE-RESTORED',
+        `${cable.systemCode}: Splice testing & PFE ±${restoredState.pfeVoltageKv} kV ramp complete. GSNR ${restoredState.osnrDb} dB (Q=${restoredState.optical.qFactorDb} dB); BGP adjacency restored.`
       );
     }
     return true;
@@ -244,79 +322,105 @@ export class RoutingEngine {
 
   public restoreAll(): number {
     let count = 0;
+    this.bgpConfig = {};
     for (const [id] of this.runtime) {
       if (this.restoreCable(id, true)) count++;
     }
-    if (count > 0) {
-      this.pushEvent(
-        'recovery',
-        'GLOBAL-RESTORE',
-        `Restored ${count} subsea trunk(s); PFE DC buses energized and BGP tables converged.`
-      );
-    }
+    this.pushEvent(
+      'recovery',
+      'BASELINE-RESTORED',
+      `Restored deterministic baseline (${count} trunk(s) repaired, BGP policy filters & anomalies cleared).`
+    );
     return count;
   }
 
   public applyScenario(
     cableIds: string[],
     scenarioName: string,
-    cause?: FaultCause
+    cause?: FaultCause,
+    subsystemFaultMode?: SubsystemFaultMode,
+    bgpConfig?: BgpControlPlaneConfig
   ): void {
+    this.bgpConfig = bgpConfig ? { ...bgpConfig } : {};
     for (const [id] of this.runtime) {
       this.restoreCable(id, true);
     }
-    let cut = 0;
+    let affected = 0;
     for (const id of cableIds) {
-      if (this.severCable(id, undefined, 0.5, cause)) cut++;
+      if (this.severCable(id, undefined, 0.5, cause, subsystemFaultMode)) {
+        affected++;
+      }
     }
-    this.pushEvent(
-      'critical',
-      'SCENARIO-EXEC',
-      `Scenario "${scenarioName}" active (${cut} trunks severed; OTDR fault localization complete).`
-    );
+
+    if (bgpConfig?.routeLeakActive) {
+      this.pushEvent(
+        'critical',
+        'BGP-ROUTE-LEAK',
+        `Scenario "${scenarioName}": AS37468 valley-free violation advertising transit prefixes with LOCAL_PREF 265 (0 physical cables cut).`
+      );
+    } else if (bgpConfig?.prefixHijackActive) {
+      this.pushEvent(
+        'critical',
+        'BGP-HIJACK',
+        `Scenario "${scenarioName}": Unauthorized origin AS64666 advertising forged 1-hop AS_PATH for European prefixes.`
+      );
+    } else if (bgpConfig?.enforceStrictCapeNoExport) {
+      this.pushEvent(
+        'critical',
+        'BGP-POLICY-DROP',
+        `Scenario "${scenarioName}": Red Sea severed; physical Cape path is UP, but AS37457 NO_EXPORT policy blocks East-West transit.`
+      );
+    } else if (bgpConfig?.disabledStations?.size) {
+      const stList = Array.from(bgpConfig.disabledStations).join(', ').toUpperCase();
+      this.pushEvent(
+        'critical',
+        'CLS-OUTAGE',
+        `Scenario "${scenarioName}": Landing station facility power & border router outage at ${stList}.`
+      );
+    } else {
+      this.pushEvent(
+        'critical',
+        'SCENARIO-ACTIVE',
+        `Scenario "${scenarioName}" applied (${affected} cable system(s) impacted; C-OTDR & BGP reconvergence complete).`
+      );
+    }
   }
 
   /**
-   * Advances active repair vessels through steaming -> ROV/grappling -> deck splicing -> PFE ramp.
+   * Advances active repair vessels through the 15-stage maritime repair sequence.
+   * Rate scales inversely with totalEstimatedHours so deeper/buried repairs take longer.
    */
   public tickRepairs(dtSeconds: number): string[] {
     const completed: string[] = [];
     for (const [id, state] of this.runtime) {
       if (state.cutState === 'repairing') {
-        const depthAbs = Math.abs(state.faultDepthM ?? 2000);
-        // Deeper trenches require slower grapnel recovery
-        const rate = Math.max(0.085, 0.17 - (depthAbs / 8000) * 0.085);
-        state.repairProgress += dtSeconds * rate;
+        const cable = this.cableMap.get(id)!;
+        const faultCoord =
+          state.cutCoord ??
+          cable.waypoints[Math.floor(cable.waypoints.length / 2)];
+        const prevPlan =
+          state.repairPlan ??
+          computeSubseaRepairPlan(cable, faultCoord, state.repairProgress);
 
-        let nextPhase: RepairPhase = 'steaming';
-        if (state.repairProgress >= 0.86) nextPhase = 'pfe-ramp';
-        else if (state.repairProgress >= 0.58) nextPhase = 'splicing';
-        else if (state.repairProgress >= 0.3) nextPhase = 'grappling';
+        // Normalize simulation rate: 95h standard repair ~ 8s sim time; 165h deep repair ~ 14s sim time
+        const rate = 11.5 / Math.max(60, prevPlan.totalEstimatedHours);
+        state.repairProgress = Math.min(1, state.repairProgress + dtSeconds * rate);
 
-        if (nextPhase !== state.repairPhase) {
-          state.repairPhase = nextPhase;
-          const cable = this.cableMap.get(id);
-          if (cable) {
-            if (nextPhase === 'grappling') {
-              this.pushEvent(
-                'info',
-                'ROV-DEPLOY',
-                `${state.repairShip} lowering grapnel/ROV to ${depthAbs.toLocaleString()}m on ${cable.systemCode}.`
-              );
-            } else if (nextPhase === 'splicing') {
-              this.pushEvent(
-                'info',
-                'OPT-SPLICE',
-                `${state.repairShip} fusion-splicing ${cable.systemCode} fiber pairs in shipboard cleanroom.`
-              );
-            } else if (nextPhase === 'pfe-ramp') {
-              this.pushEvent(
-                'info',
-                'PFE-RAMP',
-                `Ramping PFE power feed on ${cable.systemCode} repeaters prior to traffic cutover.`
-              );
-            }
-          }
+        const nextPlan = computeSubseaRepairPlan(
+          cable,
+          faultCoord,
+          state.repairProgress
+        );
+        const prevLegacy = state.repairPhase;
+        state.repairPlan = nextPlan;
+        state.repairPhase = nextPlan.currentStep.legacyPhase;
+
+        if (nextPlan.currentStep.legacyPhase !== prevLegacy) {
+          this.pushEvent(
+            'info',
+            nextPlan.currentStep.code,
+            `${state.repairShip} [${cable.systemCode}]: ${nextPlan.currentStep.label} — ${nextPlan.currentStep.engineeringDetail}`
+          );
         }
 
         if (state.repairProgress >= 1) {
@@ -328,25 +432,48 @@ export class RoutingEngine {
     return completed;
   }
 
+  /**
+   * Computes the full network snapshot by executing:
+   * 1. Physical / Optical / PFE state evaluation per cable.
+   * 2. RFC 4271 BGP-4 Control Plane convergence over optically UP cables.
+   * 3. Data-Plane traffic forwarding & parallel trunk load balancing across BGP-selected hops.
+   */
   public computeSnapshot(): NetworkSnapshot {
     const loadMap = new Map<string, number>();
+    const activeCables: SubseaCable[] = [];
+    const baseLatencyMap = new Map<string, number>();
+
     for (const cable of SUBSEA_CABLES) {
-      loadMap.set(cable.id, cable.capacityTbps * 0.2);
+      loadMap.set(cable.id, cable.capacityTbps * 0.18);
+      const st = this.runtime.get(cable.id)!;
+      baseLatencyMap.set(cable.id, st.baseLatencyMs);
+      if (
+        (st.cutState === 'active' || st.cutState === 'degraded') &&
+        st.optical.opticalCarrierUp
+      ) {
+        activeCables.push(cable);
+      }
     }
+
+    // Run RFC 4271 BGP Control Plane Convergence
+    const bgpResult = convergeBgpControlPlane(
+      activeCables,
+      baseLatencyMap,
+      this.bgpConfig
+    );
 
     const corridors: TrafficCorridor[] = [];
 
     for (const def of CORRIDOR_DEFINITIONS) {
       const base = this.baselinePaths.get(def.id);
-      const route = this.findShortestPath(
-        def.srcId,
-        def.dstId,
-        loadMap,
-        false,
-        def.demandTbps
-      );
+      const key = `${def.srcId}->${def.dstId}`;
+      const bgpRoute = bgpResult.selectedRoutes.get(key) ?? null;
+      const physicallyReachable = bgpResult.physicallyReachablePairs.has(key);
 
-      if (!route) {
+      if (!bgpRoute) {
+        const status: CorridorStatus = physicallyReachable
+          ? 'POLICY_BLOCKED'
+          : 'PARTITIONED';
         corridors.push({
           id: def.id,
           label: def.label,
@@ -360,17 +487,35 @@ export class RoutingEngine {
           currentCables: [],
           currentRttMs: Infinity,
           hops: 0,
-          status: 'PARTITIONED',
+          status,
           bottleneckUtilization: 0,
           packetLossPct: 100,
           jitterMs: 0,
+          bgpRoute: null,
+          physicallyReachable,
         });
         continue;
       }
 
-      for (const cId of route.cables) {
+      // Data-Plane Traffic Engineering Layer:
+      // For each station-to-station hop selected by BGP, select the least-utilized active parallel subsea trunk
+      const selectedCables = this.resolveDataPlaneCablesForStationPath(
+        bgpRoute.stationPath,
+        activeCables,
+        loadMap,
+        def.demandTbps,
+        this.bgpConfig.routeLeakActive
+      );
+
+      for (const cId of selectedCables) {
         loadMap.set(cId, (loadMap.get(cId) ?? 0) + def.demandTbps);
       }
+
+      let baseRttSum = 0;
+      for (const cId of selectedCables) {
+        baseRttSum += this.runtime.get(cId)!.baseLatencyMs;
+      }
+      baseRttSum = Number(baseRttSum.toFixed(1));
 
       corridors.push({
         id: def.id,
@@ -378,29 +523,38 @@ export class RoutingEngine {
         srcId: def.srcId,
         dstId: def.dstId,
         demandTbps: def.demandTbps,
-        baselinePath: base?.path ?? route.path,
-        baselineCables: base?.cables ?? route.cables,
-        baselineRttMs: base?.rttMs ?? route.rttMs,
-        currentPath: route.path,
-        currentCables: route.cables,
-        currentRttMs: route.rttMs,
-        hops: Math.max(0, route.path.length - 1),
+        baselinePath: base?.path ?? bgpRoute.stationPath,
+        baselineCables: base?.cables ?? selectedCables,
+        baselineRttMs: base?.rttMs ?? baseRttSum,
+        currentPath: bgpRoute.stationPath,
+        currentCables: selectedCables,
+        currentRttMs: baseRttSum,
+        hops: Math.max(0, bgpRoute.stationPath.length - 1),
         status: 'OPTIMAL',
         bottleneckUtilization: 0,
         packetLossPct: 0,
         jitterMs: 0.4,
+        bgpRoute,
+        physicallyReachable,
       });
     }
 
+    // Update Data-Plane Utilization & M/M/1/K Queueing Delay on each cable
     let totalActiveTbps = 0;
     let totalDesignTbps = 0;
     let severedCount = 0;
+    let degradedCount = 0;
     let repairingCount = 0;
 
     for (const cable of SUBSEA_CABLES) {
       totalDesignTbps += cable.capacityTbps;
       const state = this.runtime.get(cable.id)!;
-      if (state.cutState === 'active') {
+      if (state.cutState === 'degraded') degradedCount++;
+
+      if (
+        (state.cutState === 'active' || state.cutState === 'degraded') &&
+        state.optical.opticalCarrierUp
+      ) {
         totalActiveTbps += cable.capacityTbps;
         const carried = loadMap.get(cable.id) ?? 0;
         const util = carried / cable.capacityTbps;
@@ -420,6 +574,7 @@ export class RoutingEngine {
       }
     }
 
+    // Finalize corridor latency, congestion, packet loss, jitter, and status
     let rttSum = 0;
     let baselineRttSum = 0;
     let reachableCount = 0;
@@ -428,7 +583,7 @@ export class RoutingEngine {
 
     for (const c of corridors) {
       baselineRttSum += c.baselineRttMs;
-      if (c.status === 'PARTITIONED') {
+      if (c.status === 'PARTITIONED' || c.status === 'POLICY_BLOCKED') {
         partitionedCount++;
         continue;
       }
@@ -444,7 +599,9 @@ export class RoutingEngine {
       c.currentRttMs = Number(totalEffRtt.toFixed(1));
       c.bottleneckUtilization = Number(maxUtil.toFixed(3));
       c.packetLossPct =
-        maxUtil > 0.92 ? Number(Math.min(28, (maxUtil - 0.92) * 42).toFixed(2)) : 0;
+        maxUtil > 0.92
+          ? Number(Math.min(35, (maxUtil - 0.92) * 45).toFixed(2))
+          : 0;
       c.jitterMs =
         maxUtil > 0.72
           ? Number((0.6 + Math.pow((maxUtil - 0.72) * 5, 1.8) * 3.5).toFixed(1))
@@ -454,67 +611,71 @@ export class RoutingEngine {
         c.currentCables.length !== c.baselineCables.length ||
         c.currentCables.some((id, idx) => id !== c.baselineCables[idx]);
 
-      let status: CorridorStatus = 'OPTIMAL';
-      if (maxUtil >= 0.85) {
-        status = 'CONGESTED';
+      if (c.bgpRoute?.isHijack) {
+        c.status = 'HIJACKED';
+        c.packetLossPct = Math.max(c.packetLossPct, 14.5);
+        reroutedCount++;
+      } else if (maxUtil >= 0.85) {
+        c.status = 'CONGESTED';
+        if (pathChanged) reroutedCount++;
       } else if (pathChanged) {
-        status = 'REROUTED';
+        c.status = 'REROUTED';
+        reroutedCount++;
+      } else {
+        c.status = 'OPTIMAL';
       }
-      if (pathChanged) reroutedCount++;
-      c.status = status;
 
       rttSum += c.currentRttMs;
       reachableCount++;
     }
 
+    // Evaluate Custom Traceroute using BGP Loc-RIB
     let customTrace: TrafficCorridor | null = null;
     if (
       this.customSrcId &&
       this.customDstId &&
       this.customSrcId !== this.customDstId
     ) {
-      const srcStation = LANDING_STATIONS.find((s) => s.id === this.customSrcId);
-      const dstStation = LANDING_STATIONS.find((s) => s.id === this.customDstId);
-      if (srcStation && dstStation) {
-        const matchingCorridor = corridors.find(
-          (c) => c.srcId === this.customSrcId && c.dstId === this.customDstId
-        );
-        if (matchingCorridor) {
-          customTrace = {
-            ...matchingCorridor,
-            id: 'custom-trace',
-          };
-        } else {
-          const baseTrace = this.findShortestPath(
-            this.customSrcId,
-            this.customDstId,
-            this.baselineLoads,
-            true
-          );
-          const curTrace = this.findShortestPath(
-            this.customSrcId,
-            this.customDstId,
-            loadMap
-          );
+      const matchingCorridor = corridors.find(
+        (c) => c.srcId === this.customSrcId && c.dstId === this.customDstId
+      );
+      if (matchingCorridor) {
+        customTrace = { ...matchingCorridor, id: 'custom-trace' };
+      } else {
+        const srcStation = LANDING_STATIONS.find((s) => s.id === this.customSrcId);
+        const dstStation = LANDING_STATIONS.find((s) => s.id === this.customDstId);
+        if (srcStation && dstStation) {
+          const key = `${srcStation.id}->${dstStation.id}`;
+          const bgpRoute = bgpResult.selectedRoutes.get(key) ?? null;
+          const physicallyReachable = bgpResult.physicallyReachablePairs.has(key);
 
           let curRtt = Infinity;
           let maxUtil = 0;
-          let status: CorridorStatus = 'PARTITIONED';
+          let status: CorridorStatus = physicallyReachable
+            ? 'POLICY_BLOCKED'
+            : 'PARTITIONED';
+          let curCables: string[] = [];
 
-          if (curTrace) {
+          if (bgpRoute) {
+            curCables = this.resolveDataPlaneCablesForStationPath(
+              bgpRoute.stationPath,
+              activeCables,
+              loadMap,
+              10,
+              this.bgpConfig.routeLeakActive
+            );
             curRtt = 0;
-            for (const cId of curTrace.cables) {
+            for (const cId of curCables) {
               const st = this.runtime.get(cId)!;
               curRtt += st.effectiveLatencyMs;
               if (st.utilization > maxUtil) maxUtil = st.utilization;
             }
             curRtt = Number(curRtt.toFixed(1));
-            const changed =
-              !baseTrace ||
-              curTrace.cables.length !== baseTrace.cables.length ||
-              curTrace.cables.some((id, idx) => id !== baseTrace.cables[idx]);
-            status =
-              maxUtil >= 0.85 ? 'CONGESTED' : changed ? 'REROUTED' : 'OPTIMAL';
+            status = bgpRoute.isHijack
+              ? 'HIJACKED'
+              : maxUtil >= 0.85
+              ? 'CONGESTED'
+              : 'OPTIMAL';
           }
 
           customTrace = {
@@ -523,25 +684,27 @@ export class RoutingEngine {
             srcId: srcStation.id,
             dstId: dstStation.id,
             demandTbps: 10,
-            baselinePath: baseTrace?.path ?? [],
-            baselineCables: baseTrace?.cables ?? [],
-            baselineRttMs: baseTrace?.rttMs ?? 0,
-            currentPath: curTrace?.path ?? [],
-            currentCables: curTrace?.cables ?? [],
+            baselinePath: bgpRoute?.stationPath ?? [],
+            baselineCables: curCables,
+            baselineRttMs: Number.isFinite(curRtt) ? curRtt : 0,
+            currentPath: bgpRoute?.stationPath ?? [],
+            currentCables: curCables,
             currentRttMs: curRtt,
-            hops: curTrace ? Math.max(0, curTrace.path.length - 1) : 0,
+            hops: bgpRoute ? Math.max(0, bgpRoute.stationPath.length - 1) : 0,
             status,
             bottleneckUtilization: Number(maxUtil.toFixed(3)),
             packetLossPct:
-              status === 'PARTITIONED'
+              status === 'PARTITIONED' || status === 'POLICY_BLOCKED'
                 ? 100
                 : maxUtil > 0.92
-                ? Number(Math.min(28, (maxUtil - 0.92) * 42).toFixed(2))
+                ? Number(Math.min(35, (maxUtil - 0.92) * 45).toFixed(2))
                 : 0,
             jitterMs:
               maxUtil > 0.72
                 ? Number((0.6 + Math.pow((maxUtil - 0.72) * 5, 1.8) * 3.5).toFixed(1))
                 : 0.4,
+            bgpRoute,
+            physicallyReachable,
           };
         }
       }
@@ -559,97 +722,59 @@ export class RoutingEngine {
         (baselineRttSum / CORRIDOR_DEFINITIONS.length).toFixed(1)
       ),
       severedCount,
+      degradedCount,
       repairingCount,
       reroutedCount,
       partitionedCount,
+      bgpConfig: this.bgpConfig,
     };
   }
 
-  private findShortestPath(
-    srcId: string,
-    dstId: string,
-    loadEstimate: Map<string, number>,
-    ignoreCuts = false,
-    demandTbps = 10
-  ): { path: string[]; cables: string[]; rttMs: number } | null {
-    const dist = new Map<string, number>();
-    const prevNode = new Map<string, string>();
-    const prevCable = new Map<string, string>();
-    const visited = new Set<string>();
+  /**
+   * Resolves which physical parallel cable trunk carries a flow between each pair of
+   * adjacent BGP next-hop stations.
+   */
+  private resolveDataPlaneCablesForStationPath(
+    stationPath: string[],
+    activeCables: SubseaCable[],
+    loadMap: Map<string, number>,
+    demandTbps: number,
+    routeLeakActive?: boolean
+  ): string[] {
+    const chosen: string[] = [];
+    for (let i = 0; i < stationPath.length - 1; i++) {
+      const u = stationPath[i];
+      const v = stationPath[i + 1];
+      const candidates = activeCables.filter(
+        (c) =>
+          (c.endpoints[0] === u && c.endpoints[1] === v) ||
+          (c.endpoints[0] === v && c.endpoints[1] === u)
+      );
+      if (candidates.length === 0) continue;
 
-    for (const s of LANDING_STATIONS) {
-      dist.set(s.id, Infinity);
-    }
-    dist.set(srcId, 0);
-
-    const adj = new Map<
-      string,
-      Array<{ to: string; cable: SubseaCable; weight: number; rtt: number }>
-    >();
-    for (const s of LANDING_STATIONS) {
-      adj.set(s.id, []);
-    }
-
-    for (const cable of SUBSEA_CABLES) {
-      const state = this.runtime.get(cable.id)!;
-      if (!ignoreCuts && state.cutState !== 'active') continue;
-
-      const estLoad =
-        (loadEstimate.get(cable.id) ?? cable.capacityTbps * 0.2) + demandTbps;
-      const util = estLoad / cable.capacityTbps;
-      const congestionPenalty =
-        util > 0.72 ? Math.pow((util - 0.72) * 5, 2) * 18 : 0;
-      const weight = state.baseLatencyMs + congestionPenalty;
-
-      const [a, b] = cable.endpoints;
-      adj.get(a)?.push({ to: b, cable, weight, rtt: state.baseLatencyMs });
-      adj.get(b)?.push({ to: a, cable, weight, rtt: state.baseLatencyMs });
-    }
-
-    while (true) {
-      let u: string | null = null;
-      let minD = Infinity;
-      for (const [nodeId, d] of dist) {
-        if (!visited.has(nodeId) && d < minD) {
-          minD = d;
-          u = nodeId;
+      let best = candidates[0];
+      let bestScore = Infinity;
+      for (const cand of candidates) {
+        if (
+          routeLeakActive &&
+          (cand.id === 'wacs-south' ||
+            cand.id === 'wacs-mid' ||
+            cand.id === 'seacom-south')
+        ) {
+          best = cand;
+          break;
+        }
+        const projectedUtil =
+          ((loadMap.get(cand.id) ?? 0) + demandTbps) / cand.capacityTbps;
+        const baseLat = this.runtime.get(cand.id)!.baseLatencyMs;
+        const score = baseLat + Math.max(0, projectedUtil - 0.5) * 45;
+        if (score < bestScore) {
+          bestScore = score;
+          best = cand;
         }
       }
-      if (!u || minD === Infinity || u === dstId) break;
-      visited.add(u);
-
-      for (const edge of adj.get(u) ?? []) {
-        if (visited.has(edge.to)) continue;
-        const alt = minD + edge.weight;
-        if (alt < (dist.get(edge.to) ?? Infinity)) {
-          dist.set(edge.to, alt);
-          prevNode.set(edge.to, u);
-          prevCable.set(edge.to, edge.cable.id);
-        }
-      }
+      chosen.push(best.id);
     }
-
-    if (!prevNode.has(dstId) && srcId !== dstId) return null;
-
-    const path: string[] = [];
-    const cables: string[] = [];
-    let curr: string | undefined = dstId;
-    let totalRtt = 0;
-
-    while (curr) {
-      path.unshift(curr);
-      const cId = prevCable.get(curr);
-      if (cId) {
-        cables.unshift(cId);
-        totalRtt += this.runtime.get(cId)!.baseLatencyMs;
-      }
-      curr = prevNode.get(curr);
-    }
-
-    return {
-      path,
-      cables,
-      rttMs: Number(totalRtt.toFixed(1)),
-    };
+    return chosen;
   }
 }
