@@ -106,15 +106,20 @@ export interface ProjectedMarker {
   y: number;
 }
 
+export type RenderQualityTier = 'high' | 'balanced' | 'eco';
+export type QualityModeSetting = 'auto' | 'high' | 'eco';
+
 export interface GlobeCallbacks {
   onCableClick: (
     cableId: string,
     cutCoord: [number, number],
-    progressT: number
+    progressT: number,
+    shiftKey: boolean
   ) => void;
   onStationClick: (stationId: string) => void;
   onHoverChange: (info: HoverInfo | null) => void;
   onMarkersUpdate?: (markers: ProjectedMarker[]) => void;
+  onQualityChange?: (tier: RenderQualityTier) => void;
 }
 
 export class GlobeScene {
@@ -159,14 +164,31 @@ export class GlobeScene {
   private pointerDownPos = { x: 0, y: 0 };
   private hoveredCableId: string | null = null;
   private hoveredStationId: string | null = null;
+  private inspectedCableId: string | null = 'aae1-redsea';
+  private inspectedHaloMesh: THREE.Mesh | null = null;
+  private hoveredHaloMesh: THREE.Mesh | null = null;
 
   private selectedCorridorCables = new Set<string>();
+  private orderedCorridorCables: string[] = [];
+  private fadingCorridorCables = new Set<string>();
+  private pathFadeRemaining = 0;
+  private pathDrawProgress = 1;
+  private readonly goldColor = new THREE.Color(0xfde047);
+  private readonly hotGoldColor = new THREE.Color(0xfb7185);
+  private readonly baseMixColor = new THREE.Color();
+
   private selectedEndpoints = new Set<string>();
   private endpointRoles: { srcId: string | null; dstId: string | null } = {
     srcId: null,
     dstId: null,
   };
   private snapshot: NetworkSnapshot | null = null;
+
+  private qualityMode: QualityModeSetting = 'auto';
+  private activeQualityTier: RenderQualityTier = 'high';
+  private packetStride = 1;
+  private fpsSampleTime = 0;
+  private fpsSampleFrames = 0;
 
   private autoOrbit = true;
   private showPulses = true;
@@ -205,7 +227,15 @@ export class GlobeScene {
       antialias: true,
       powerPreference: 'high-performance',
     });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    const cores = navigator.hardwareConcurrency || 8;
+    const mem = (navigator as { deviceMemory?: number }).deviceMemory || 8;
+    this.activeQualityTier = cores <= 4 || mem <= 4 ? 'balanced' : 'high';
+    this.packetStride = this.activeQualityTier === 'high' ? 1 : 2;
+    this.renderer.setPixelRatio(
+      this.activeQualityTier === 'high'
+        ? Math.min(window.devicePixelRatio, 2)
+        : Math.min(window.devicePixelRatio, 1.35)
+    );
     this.renderer.setSize(width, height);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.18;
@@ -375,18 +405,104 @@ export class GlobeScene {
     }
   }
 
+  public setInspectedCable(cableId: string | null): void {
+    if (this.inspectedCableId === cableId) return;
+    this.inspectedCableId = cableId;
+    this.updateHaloMesh('inspected', cableId);
+    this.refreshCableColors();
+  }
+
+  public setQualityMode(mode: QualityModeSetting): void {
+    this.qualityMode = mode;
+    if (mode === 'high') {
+      this.applyQualityTier('high');
+    } else if (mode === 'eco') {
+      this.applyQualityTier('eco');
+    } else {
+      const cores = navigator.hardwareConcurrency || 8;
+      const mem = (navigator as { deviceMemory?: number }).deviceMemory || 8;
+      this.applyQualityTier(cores <= 4 || mem <= 4 ? 'balanced' : 'high');
+    }
+  }
+
+  public getActiveQualityTier(): RenderQualityTier {
+    return this.activeQualityTier;
+  }
+
+  private applyQualityTier(tier: RenderQualityTier): void {
+    if (this.activeQualityTier === tier) return;
+    this.activeQualityTier = tier;
+    this.packetStride = tier === 'high' ? 1 : tier === 'balanced' ? 2 : 3;
+    const dprCap = tier === 'high' ? 2 : tier === 'balanced' ? 1.35 : 1;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, dprCap));
+    this.handleResize();
+    this.callbacks.onQualityChange?.(tier);
+  }
+
+  private updateHaloMesh(
+    kind: 'inspected' | 'hovered',
+    cableId: string | null
+  ): void {
+    const existing =
+      kind === 'inspected' ? this.inspectedHaloMesh : this.hoveredHaloMesh;
+    if (existing) {
+      this.globeGroup.remove(existing);
+      existing.geometry.dispose();
+      (existing.material as THREE.Material).dispose();
+      if (kind === 'inspected') this.inspectedHaloMesh = null;
+      else this.hoveredHaloMesh = null;
+    }
+    if (!cableId) return;
+    const vis = this.cableVisuals.get(cableId);
+    if (!vis) return;
+
+    const segments = Math.max(48, vis.cable.waypoints.length * 18);
+    const radius = kind === 'hovered' ? 0.068 : 0.078;
+    const haloGeo = new THREE.TubeGeometry(vis.curve, segments, radius, 6, false);
+    const haloMat = new THREE.MeshBasicMaterial({
+      color: kind === 'hovered' ? 0xffffff : 0x34d399,
+      transparent: true,
+      opacity: kind === 'hovered' ? 0.55 : 0.42,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const mesh = new THREE.Mesh(haloGeo, haloMat);
+    this.globeGroup.add(mesh);
+    if (kind === 'inspected') this.inspectedHaloMesh = mesh;
+    else this.hoveredHaloMesh = mesh;
+  }
+
   public updateSnapshot(
     snapshot: NetworkSnapshot,
     highlightedCables: string[],
     endpoints: string[]
   ): void {
     this.snapshot = snapshot;
-    this.selectedCorridorCables = new Set(highlightedCables);
+    const nextSet = new Set(highlightedCables);
+    const prevSet = this.selectedCorridorCables;
+    const pathChanged =
+      highlightedCables.length !== this.orderedCorridorCables.length ||
+      highlightedCables.some((id, idx) => id !== this.orderedCorridorCables[idx]);
+
+    if (pathChanged) {
+      const removed = new Set<string>();
+      for (const id of prevSet) {
+        if (!nextSet.has(id)) removed.add(id);
+      }
+      this.fadingCorridorCables = removed;
+      this.pathFadeRemaining = this.reducedMotion ? 0 : 0.72;
+      this.pathDrawProgress =
+        this.reducedMotion || highlightedCables.length === 0 ? 1 : 0;
+    }
+
+    this.selectedCorridorCables = nextSet;
+    this.orderedCorridorCables = [...highlightedCables];
     this.selectedEndpoints = new Set(endpoints);
     this.endpointRoles = {
       srcId: endpoints[0] ?? null,
       dstId: endpoints[1] ?? null,
     };
+    this.updateHaloMesh('inspected', this.inspectedCableId);
     this.refreshCableColors();
     this.refreshRepeaterColors();
     this.refreshStationHighlights();
@@ -1207,7 +1323,13 @@ export class GlobeScene {
       if (!state) continue;
 
       const isHovered = this.hoveredCableId === id;
+      const isInspected = this.inspectedCableId === id;
       const isHighlighted = this.selectedCorridorCables.has(id);
+      const isFading =
+        !isHighlighted &&
+        this.pathFadeRemaining > 0 &&
+        this.fadingCorridorCables.has(id);
+      const hasCorridorFocus = this.orderedCorridorCables.length > 0;
 
       if (state.cutState === 'severed' || state.cutState === 'repairing') {
         vis.material.color.setHex(
@@ -1291,6 +1413,17 @@ export class GlobeScene {
       vis.rovTetherLine.visible = false;
       vis.rovBeacon.visible = false;
 
+      const baseHex =
+        state.cutState === 'degraded'
+          ? 0xf59e0b
+          : this.showHeatmap && state.utilization >= 0.9
+          ? 0xf43f5e
+          : this.showHeatmap && state.utilization >= 0.68
+          ? 0xf59e0b
+          : vis.cable.isTerrestrial
+          ? 0x818cf8
+          : 0x0ea5e9;
+
       if (isHovered) {
         vis.material.color.setHex(0xffffff);
         vis.material.opacity = 1.0;
@@ -1298,22 +1431,37 @@ export class GlobeScene {
         vis.material.color.setHex(0xf59e0b);
         vis.material.opacity = 0.95;
       } else if (isHighlighted) {
-        vis.material.color.setHex(
-          state.utilization >= 0.85 ? 0xfb7185 : 0xfde047
-        );
-        vis.material.opacity = 1.0;
-      } else if (this.showHeatmap && state.utilization >= 0.9) {
-        vis.material.color.setHex(0xf43f5e);
-        vis.material.opacity = 0.95;
-      } else if (this.showHeatmap && state.utilization >= 0.68) {
-        vis.material.color.setHex(0xf59e0b);
-        vis.material.opacity = 0.9;
-      } else if (vis.cable.isTerrestrial) {
-        vis.material.color.setHex(0x818cf8);
-        vis.material.opacity = 0.78;
+        const hopIndex = this.orderedCorridorCables.indexOf(id);
+        const hopCount = Math.max(1, this.orderedCorridorCables.length);
+        const reveal =
+          this.pathDrawProgress >= 1
+            ? 1
+            : THREE.MathUtils.clamp(
+                (this.pathDrawProgress * (hopCount + 0.35) - hopIndex * 0.55) /
+                  0.65,
+                0,
+                1
+              );
+        this.baseMixColor.setHex(baseHex);
+        const targetCol =
+          state.utilization >= 0.85 ? this.hotGoldColor : this.goldColor;
+        vis.material.color.lerpColors(this.baseMixColor, targetCol, reveal);
+        vis.material.opacity = THREE.MathUtils.lerp(0.65, 1.0, reveal);
+      } else if (isFading) {
+        const fadeT = THREE.MathUtils.clamp(this.pathFadeRemaining / 0.72, 0, 1);
+        this.baseMixColor.setHex(baseHex);
+        vis.material.color.lerpColors(this.baseMixColor, this.goldColor, fadeT);
+        vis.material.opacity = THREE.MathUtils.lerp(0.68, 0.95, fadeT);
+      } else if (isInspected) {
+        vis.material.color.setHex(0x34d399);
+        vis.material.opacity = 0.98;
       } else {
-        vis.material.color.setHex(0x0ea5e9);
-        vis.material.opacity = 0.85;
+        vis.material.color.setHex(baseHex);
+        vis.material.opacity = hasCorridorFocus
+          ? 0.52
+          : vis.cable.isTerrestrial
+          ? 0.78
+          : 0.85;
       }
     }
   }
@@ -1371,6 +1519,7 @@ export class GlobeScene {
     dom.addEventListener('pointerleave', () => {
       this.hoveredCableId = null;
       this.hoveredStationId = null;
+      this.updateHaloMesh('hovered', null);
       this.callbacks.onHoverChange(null);
       this.refreshCableColors();
       this.refreshStationHighlights();
@@ -1416,7 +1565,7 @@ export class GlobeScene {
             }
           }
         }
-        this.callbacks.onCableClick(cableId, coord, progressT);
+        this.callbacks.onCableClick(cableId, coord, progressT, e.shiftKey);
       }
     });
   }
@@ -1432,8 +1581,12 @@ export class GlobeScene {
       const stationId = stationHits[0].object.userData.stationId as string;
       const station = LANDING_STATIONS.find((s) => s.id === stationId);
       if (station) {
+        const prevHoveredCable = this.hoveredCableId;
         this.hoveredStationId = stationId;
         this.hoveredCableId = null;
+        if (prevHoveredCable !== null) {
+          this.updateHaloMesh('hovered', null);
+        }
         this.renderer.domElement.style.cursor = 'pointer';
         this.callbacks.onHoverChange({
           x: clientX,
@@ -1460,9 +1613,13 @@ export class GlobeScene {
         const depthM = cable.isTerrestrial
           ? 0
           : sampleSeabedDepthMeters(lat, lon);
+        const changed = this.hoveredCableId !== cableId;
         this.hoveredCableId = cableId;
         this.hoveredStationId = null;
-        this.renderer.domElement.style.cursor = 'crosshair';
+        if (changed) {
+          this.updateHaloMesh('hovered', cableId);
+        }
+        this.renderer.domElement.style.cursor = 'pointer';
         this.callbacks.onHoverChange({
           x: clientX,
           y: clientY,
@@ -1480,6 +1637,7 @@ export class GlobeScene {
     if (this.hoveredCableId || this.hoveredStationId) {
       this.hoveredCableId = null;
       this.hoveredStationId = null;
+      this.updateHaloMesh('hovered', null);
       this.renderer.domElement.style.cursor = 'grab';
       this.callbacks.onHoverChange(null);
       this.refreshStationHighlights();
@@ -1502,7 +1660,33 @@ export class GlobeScene {
     this.lastTime = now;
 
     if (!this.motionPaused && !this.reducedMotion) {
-      this.oceanSurfaceUniforms.uTime.value += dt;
+      this.oceanSurfaceUniforms.uTime.value +=
+        this.activeQualityTier === 'eco' ? dt * 0.45 : dt;
+    }
+
+    // Adaptive GPU quality monitor over a 1.5s rolling frame window
+    if (this.qualityMode === 'auto') {
+      this.fpsSampleTime += dt;
+      this.fpsSampleFrames += 1;
+      if (this.fpsSampleTime >= 1.5) {
+        const avgFps = this.fpsSampleFrames / this.fpsSampleTime;
+        this.fpsSampleTime = 0;
+        this.fpsSampleFrames = 0;
+        if (avgFps < 34 && this.activeQualityTier === 'high') {
+          this.applyQualityTier('balanced');
+        } else if (avgFps < 24 && this.activeQualityTier === 'balanced') {
+          this.applyQualityTier('eco');
+        }
+      }
+    }
+
+    if (this.pathDrawProgress < 1 || this.pathFadeRemaining > 0) {
+      this.pathDrawProgress = Math.min(1, this.pathDrawProgress + dt / 0.85);
+      this.pathFadeRemaining = Math.max(0, this.pathFadeRemaining - dt);
+      if (this.pathFadeRemaining <= 0) {
+        this.fadingCorridorCables.clear();
+      }
+      this.refreshCableColors();
     }
 
     if (!this.motionPaused && this.onTickCallback) {
@@ -1612,6 +1796,12 @@ export class GlobeScene {
         }
 
         const isHighlighted = this.selectedCorridorCables.has(pkt.cableId);
+        if (!isHighlighted && this.packetStride > 1 && i % this.packetStride !== 0) {
+          this.dummy.scale.setScalar(0);
+          this.dummy.updateMatrix();
+          this.packetMesh.setMatrixAt(i, this.dummy.matrix);
+          continue;
+        }
         const speedBoost = isHighlighted ? 1.55 : 1.0;
         pkt.u += pkt.direction * pkt.speed * speedBoost * stepFactor;
         if (pkt.u > 1) pkt.u -= 1;
@@ -1737,6 +1927,8 @@ export class GlobeScene {
   public dispose(): void {
     cancelAnimationFrame(this.animFrameId);
     this.resizeObserver.disconnect();
+    this.updateHaloMesh('hovered', null);
+    this.updateHaloMesh('inspected', null);
     this.controls.dispose();
     this.renderer.dispose();
   }

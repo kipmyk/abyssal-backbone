@@ -109,7 +109,14 @@ export class SubseaRovScene {
       antialias: true,
       powerPreference: 'high-performance',
     });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    const cores = navigator.hardwareConcurrency || 8;
+    const mem = (navigator as { deviceMemory?: number }).deviceMemory || 8;
+    const startBalanced = cores <= 4 || mem <= 4;
+    this.renderer.setPixelRatio(
+      startBalanced
+        ? Math.min(window.devicePixelRatio, 1.35)
+        : Math.min(window.devicePixelRatio, 2)
+    );
     this.renderer.setSize(w, h);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -163,6 +170,19 @@ export class SubseaRovScene {
 
   public setMotionPaused(paused: boolean): void {
     this.motionPaused = paused;
+  }
+
+  public setQualityTier(tier: 'high' | 'balanced' | 'eco'): void {
+    const dprCap = tier === 'high' ? 2 : tier === 'balanced' ? 1.35 : 1;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, dprCap));
+    this.renderer.shadowMap.enabled = tier !== 'eco';
+    const snowTotal = this.marineSnow.geometry.getAttribute('position').count;
+    const visibleRatio = tier === 'high' ? 1 : tier === 'balanced' ? 0.6 : 0.3;
+    this.marineSnow.geometry.setDrawRange(
+      0,
+      Math.max(20, Math.round(snowTotal * visibleRatio))
+    );
+    this.handleResize();
   }
 
   public setCameraMode(mode: SubseaCameraMode): void {
