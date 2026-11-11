@@ -12,7 +12,7 @@
   <body>
     <a href="#main-sim" class="skip-link visually-hidden">Skip to simulation controls</a>
 
-    <div id="app" class="app-shell">
+    <div id="app" class="app-shell" data-view-mode="split" data-density="engineering">
       <header class="top-bar">
         <div class="brand-cluster">
           <div class="brand-mark" aria-hidden="true">
@@ -29,7 +29,7 @@
           <span id="global-status-pill" class="status-pill status-optimal">CONVERGED</span>
         </div>
 
-        <div class="kpi-strip" aria-label="Calculated network telemetry">
+        <div class="kpi-strip" aria-label="Calculated network telemetry" aria-live="off">
           <div class="kpi-item">
             <span class="kpi-label">Lit Trunk Capacity</span>
             <span id="kpi-capacity" class="kpi-value">0 / 0 Tbps</span>
@@ -42,9 +42,13 @@
             <span class="kpi-label">Faulted Trunks</span>
             <span id="kpi-severed" class="kpi-value">0</span>
           </div>
-          <div class="kpi-item">
+          <div class="kpi-item" data-eng-only="true">
             <span class="kpi-label">Impacted BGP Flows</span>
             <span id="kpi-rerouted" class="kpi-value">0</span>
+          </div>
+          <div class="kpi-item kpi-simplified-path" data-simp-only="true">
+            <span class="kpi-label">Active BGP Path</span>
+            <span id="kpi-active-path" class="kpi-value">--</span>
           </div>
         </div>
 
@@ -60,6 +64,43 @@
               3D Hydrographic Globe
             </button>
           </div>
+
+          <div class="view-mode-group density-group" role="group" aria-label="Telemetry display density">
+            <button type="button" id="btn-density-simplified" class="view-mode-btn" data-density-mode="simplified" aria-pressed="false">
+              Simplified
+            </button>
+            <button type="button" id="btn-density-engineering" class="view-mode-btn active" data-density-mode="engineering" aria-pressed="true">
+              Engineering
+            </button>
+          </div>
+
+          <button type="button" id="btn-guide" class="btn-ghost" title="Open guided tour, glossary &amp; model assumptions">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+            <span>Guide</span>
+          </button>
+
+          <button type="button" id="btn-share-scenario" class="btn-ghost" title="Copy shareable scenario link">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="18" cy="5" r="3" />
+              <circle cx="6" cy="12" r="3" />
+              <circle cx="18" cy="19" r="3" />
+              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+            </svg>
+            <span id="share-label">Share</span>
+          </button>
+
+          <button type="button" id="btn-contrast" class="btn-ghost" aria-pressed="false" title="Toggle high-contrast theme">
+            <span id="contrast-label">High Contrast</span>
+          </button>
+
+          <button type="button" id="btn-focus-mode" class="btn-ghost" aria-pressed="false" title="Maximize 3D viewports (Shortcut: F)">
+            <span>Focus (F)</span>
+          </button>
 
           <button
             type="button"
@@ -155,27 +196,101 @@
           </footer>
         </section>
 
-        <!-- Status Legend Bar -->
-        <div class="globe-legend" aria-hidden="true">
-          <span class="legend-item"><i class="dot dot-cyan"></i>Nominal Trunk</span>
-          <span class="legend-item"><i class="dot dot-amber"></i>Degraded / High Load</span>
-          <span class="legend-item"><i class="dot dot-crimson"></i>Optical LOS / Cut</span>
-          <span class="legend-item"><i class="dot dot-gold"></i>Selected BGP Path</span>
+        <!-- First-Visit Non-Blocking Walkthrough Strip -->
+        <aside id="onboarding-banner" class="onboarding-banner" aria-label="Interactive quick-start tour" hidden>
+          <div class="onboarding-head">
+            <span id="tour-step-badge" class="micro-badge">TOUR · 1 / 4</span>
+            <strong id="tour-step-title">Explore the Three 3D Viewports</strong>
+          </div>
+          <p id="tour-step-body" class="onboarding-body">
+            Switch between Split (Globe + Seabed ROV), 3D Seafloor cutaway, and Hydrographic Globe in the top bar.
+          </p>
+          <div class="onboarding-actions">
+            <button type="button" id="btn-tour-action" class="cable-action-btn">Preview Viewport</button>
+            <button type="button" id="btn-tour-next" class="cable-action-btn splice">Next</button>
+            <button type="button" id="btn-tour-glossary" class="btn-ghost">Full Guide</button>
+            <button type="button" id="btn-tour-dismiss" class="btn-ghost" aria-label="Dismiss quick-start tour">Dismiss</button>
+          </div>
+        </aside>
+
+        <!-- Exit Focus Mode Pill -->
+        <button type="button" id="btn-exit-focus" class="exit-focus-pill" hidden>
+          Exit Focus Mode (F)
+        </button>
+
+        <!-- Globe Overlay Bar (Click Action + Adaptive Quality) -->
+        <div class="globe-legend">
+          <div class="click-mode-switch" role="group" aria-label="Globe cable click action">
+            <span class="meta-label">Globe Click:</span>
+            <button type="button" id="btn-click-inspect" class="mini-pill active" aria-pressed="true">Inspect</button>
+            <button type="button" id="btn-click-fault" class="mini-pill" aria-pressed="false">Fault / Repair</button>
+          </div>
           <span class="legend-sep">|</span>
-          <span class="legend-hint">Simulated Telemetry (ITU-T G.977 / RFC 4271)</span>
+          <span id="quality-badge" class="legend-hint">Quality: Auto</span>
         </div>
 
         <!-- Left Control Panel -->
         <aside id="left-dock" class="hud-panel left-dock" aria-label="Scenario injection and BGP path inspector">
+          <details class="how-to-details">
+            <summary>How to use this simulator</summary>
+            <div class="how-to-content">
+              <p><strong>1. Viewports:</strong> Compare macro cable routing on the <strong>Globe</strong>, close-up armor/ROV recovery on the <strong>Seafloor</strong>, or inspect both in <strong>Split</strong> mode.</p>
+              <p><strong>2. BGP Inspector:</strong> Choose an Origin and Destination CLS below (or click two shore stations on the globe) to trace active fiber hops and RFC 4271 attributes.</p>
+              <p><strong>3. Fault Scenarios &amp; Diff:</strong> Trigger a preset incident or switch to <em>Fault / Repair</em> click mode on the globe, then review Before/After impact deltas.</p>
+            </div>
+          </details>
+
+          <section id="impact-comparison-card" class="panel-section impact-card" aria-live="polite" hidden>
+            <div class="section-header">
+              <h2>Before / After Impact</h2>
+              <span id="impact-badge" class="badge badge-rerouted">DELTA</span>
+            </div>
+            <div class="impact-metrics-grid">
+              <div class="trace-metric-cell">
+                <span class="meta-label">Capacity Delta</span>
+                <span id="impact-cap-delta" class="mono-val">--</span>
+              </div>
+              <div class="trace-metric-cell">
+                <span class="meta-label">Mean RTT Delta</span>
+                <span id="impact-rtt-delta" class="mono-val">--</span>
+              </div>
+            </div>
+            <div id="impact-path-diff" class="trace-chain"></div>
+            <div id="impact-flows-wrap" class="impact-flows-wrap">
+              <span class="meta-label">Impacted BGP Corridors (Click to Inspect)</span>
+              <ul id="impact-flows-list" class="impact-flows-list"></ul>
+            </div>
+          </section>
+
           <section class="panel-section">
             <div class="section-header">
               <h2>BGP-4 &amp; Optical Path Inspector</h2>
-              <span id="trace-status-badge" class="badge badge-optimal">OPTIMAL</span>
+              <div class="header-inline-tools">
+                <button
+                  type="button"
+                  class="toggletip-btn"
+                  popovertarget="hint-bgp"
+                  popovertargetaction="show"
+                  aria-label="Explain BGP-4 decision order"
+                >?</button>
+                <div id="hint-bgp" popover="hint" class="term-popover"></div>
+                <span id="trace-status-badge" class="badge badge-optimal">OPTIMAL</span>
+              </div>
             </div>
 
             <div class="trace-selectors">
               <div class="field-group">
-                <label for="trace-src">Origin CLS (AS)</label>
+                <div class="label-with-tip">
+                  <label for="trace-src">Origin CLS (AS)</label>
+                  <button
+                    type="button"
+                    class="toggletip-btn"
+                    popovertarget="hint-cls"
+                    popovertargetaction="show"
+                    aria-label="What is CLS and AS?"
+                  >?</button>
+                  <div id="hint-cls" popover="hint" class="term-popover"></div>
+                </div>
                 <select id="trace-src" class="hud-select"></select>
               </div>
               <button type="button" id="btn-swap-trace" class="btn-icon" aria-label="Swap origin and destination">
@@ -196,22 +311,22 @@
                 <span class="meta-label">RTT Delta</span>
                 <span id="trace-delta" class="mono-val">+0.0 ms</span>
               </div>
-              <div class="trace-metric-cell">
+              <div class="trace-metric-cell" data-eng-only="true">
                 <span class="meta-label">Loss / Jitter</span>
                 <span id="trace-loss" class="mono-val">0% / 0.4ms</span>
               </div>
             </div>
 
-            <div id="bgp-rib-box" class="trace-chain" aria-live="polite"></div>
+            <div id="bgp-rib-box" class="trace-chain" data-eng-only="true" aria-live="polite"></div>
             <div id="trace-hops-chain" class="trace-chain"></div>
           </section>
 
           <section class="panel-section">
             <div class="section-header">
-              <h2>Engineering Fault Scenarios</h2>
+              <h2>Fault &amp; Historical Scenarios</h2>
               <span class="micro-badge">Deterministic</span>
             </div>
-            <div class="field-group">
+            <div class="field-group" data-eng-only="true">
               <label for="fault-cause-select">Manual Cable Click Fault Mode</label>
               <select id="fault-cause-select" class="hud-select">
                 <option value="Auto">Auto (By Depth &amp; Hazard Zone)</option>
@@ -223,10 +338,19 @@
                 <option value="Shore PFE Terminal Outage">Single Shore PFE Terminal Outage</option>
               </select>
             </div>
+            <div id="historical-event-card" class="historical-card" hidden>
+              <div class="historical-head">
+                <span id="hist-date" class="micro-badge">--</span>
+                <span class="meta-label">Historical Event</span>
+              </div>
+              <p id="hist-summary" class="historical-text"></p>
+              <p id="hist-impact" class="historical-sub"></p>
+              <p id="hist-source" class="historical-source"></p>
+            </div>
             <div id="scenario-list" class="scenario-grid"></div>
           </section>
 
-          <section class="panel-section">
+          <section class="panel-section" data-eng-only="true">
             <div class="section-header">
               <h2>Regional Hydrographic Focus</h2>
             </div>
@@ -239,9 +363,9 @@
             </div>
           </section>
 
-          <section class="panel-section">
+          <section class="panel-section" data-eng-only="true">
             <div class="section-header">
-              <h2>Viewport Layers</h2>
+              <h2>Viewport Layers &amp; Quality</h2>
               <span id="ocean-opacity-val" class="micro-badge">36% Surface</span>
             </div>
             <div class="slider-group">
@@ -254,6 +378,14 @@
                 value="36"
                 class="hud-slider"
               />
+            </div>
+            <div class="field-group">
+              <label for="quality-mode-select">3D Render Quality</label>
+              <select id="quality-mode-select" class="hud-select">
+                <option value="auto">Auto Adaptive (GPU / FPS)</option>
+                <option value="high">High Detail (Full Particles &amp; Shadows)</option>
+                <option value="eco">Eco Performance (Battery / Low GPU)</option>
+              </select>
             </div>
             <div class="toggle-grid">
               <label class="toggle-item" for="chk-pulses">
@@ -301,43 +433,76 @@
                 <div class="field-group">
                   <div class="section-header">
                     <label for="otdr-cable-select">Inspected Subsea System</label>
-                    <span id="otdr-provenance-badge" class="micro-badge">VERIFIED · ITU-T G.977</span>
+                    <div class="header-inline-tools">
+                      <button type="button" id="btn-about-cable" class="mini-pill">About System</button>
+                      <span id="otdr-provenance-badge" class="micro-badge">VERIFIED · ITU-T G.977</span>
+                    </div>
                   </div>
                   <select id="otdr-cable-select" class="hud-select"></select>
                 </div>
 
                 <!-- ITU-T G.977 Optical Link Budget & G.Suppl.41 OSNR/Q/BER Grid -->
                 <div class="otdr-telemetry-grid">
-                  <div class="trace-metric-cell">
+                  <div class="trace-metric-cell" data-eng-only="true">
                     <span class="meta-label">Fiber / Attenuation</span>
                     <span id="opt-fiber-val" class="mono-val">--</span>
                   </div>
-                  <div class="trace-metric-cell">
+                  <div class="trace-metric-cell" data-eng-only="true">
                     <span class="meta-label">Span Loss / EDFA Gain</span>
                     <span id="opt-span-val" class="mono-val">--</span>
                   </div>
                   <div class="trace-metric-cell">
-                    <span class="meta-label">GSNR / Linear OSNR</span>
+                    <div class="label-with-tip">
+                      <span class="meta-label">GSNR / Linear OSNR</span>
+                      <button
+                        type="button"
+                        class="toggletip-btn"
+                        popovertarget="hint-gsnr"
+                        popovertargetaction="show"
+                        aria-label="Explain GSNR and OSNR"
+                      >?</button>
+                      <div id="hint-gsnr" popover="hint" class="term-popover"></div>
+                    </div>
                     <span id="otdr-osnr" class="mono-val">-- dB</span>
                   </div>
                   <div class="trace-metric-cell">
-                    <span class="meta-label">Q-Factor / EOL Margin</span>
+                    <div class="label-with-tip">
+                      <span class="meta-label">Q-Factor / EOL Margin</span>
+                      <button
+                        type="button"
+                        class="toggletip-btn"
+                        popovertarget="hint-qfactor"
+                        popovertargetaction="show"
+                        aria-label="Explain Q-Factor"
+                      >?</button>
+                      <div id="hint-qfactor" popover="hint" class="term-popover"></div>
+                    </div>
                     <span id="opt-q-val" class="mono-val">-- dB</span>
                   </div>
-                  <div class="trace-metric-cell">
+                  <div class="trace-metric-cell" data-eng-only="true">
                     <span class="meta-label">Pre / Post-FEC BER</span>
                     <span id="opt-ber-val" class="mono-val">--</span>
                   </div>
-                  <div class="trace-metric-cell">
+                  <div class="trace-metric-cell" data-eng-only="true">
                     <span class="meta-label">Dispersion (CD / PMD)</span>
                     <span id="opt-disp-val" class="mono-val">--</span>
                   </div>
                 </div>
 
                 <!-- Submarine Constant-Current PFE Electrical Grid -->
-                <div class="otdr-telemetry-grid">
+                <div class="otdr-telemetry-grid" data-eng-only="true">
                   <div class="trace-metric-cell">
-                    <span class="meta-label">PFE Terminal Feed</span>
+                    <div class="label-with-tip">
+                      <span class="meta-label">PFE Terminal Feed</span>
+                      <button
+                        type="button"
+                        class="toggletip-btn"
+                        popovertarget="hint-pfe"
+                        popovertargetaction="show"
+                        aria-label="Explain Power Feed Equipment"
+                      >?</button>
+                      <div id="hint-pfe" popover="hint" class="term-popover"></div>
+                    </div>
                     <span id="otdr-pfe" class="mono-val">-- kV</span>
                   </div>
                   <div class="trace-metric-cell">
@@ -360,6 +525,11 @@
                   <button type="button" id="btn-dive-cable" class="btn-ghost" style="flex:1;">Center Globe on Cable</button>
                   <button type="button" id="btn-otdr-action" class="cable-action-btn cut">Inject Fault</button>
                 </div>
+
+                <details class="assumptions-details">
+                  <summary>Model Assumptions &amp; Educational Notice</summary>
+                  <div id="inline-assumptions-body" class="assumptions-body"></div>
+                </details>
               </div>
             </div>
 
@@ -388,6 +558,21 @@
             <!-- TAB 3: 15-STAGE MARINE REPAIR OPERATIONS INSPECTOR -->
             <div role="tabpanel" id="panel-repair" aria-labelledby="tab-repair" class="tab-panel" hidden="until-found">
               <div class="panel-inner">
+                <div id="repair-timeline-card" class="repair-timeline-card">
+                  <div class="section-header">
+                    <span class="meta-label">Estimated Repair Timeline</span>
+                    <span id="repair-etr-pill" class="micro-badge">STANDBY</span>
+                  </div>
+                  <div class="repair-progress-track" aria-hidden="true">
+                    <div id="repair-progress-fill" class="repair-progress-fill" style="inline-size: 0%"></div>
+                  </div>
+                  <div class="repair-phases-row" aria-hidden="true">
+                    <span data-phase="steaming">1. Steaming</span>
+                    <span data-phase="grappling">2. Grapple</span>
+                    <span data-phase="splicing">3. Splice</span>
+                    <span data-phase="pfe-ramp">4. PFE Ramp</span>
+                  </div>
+                </div>
                 <div id="repair-summary-box" class="trace-chain"></div>
                 <ol id="repair-steps-list" class="events-list"></ol>
               </div>
@@ -412,6 +597,13 @@
             <!-- TAB 5: TELECOMMUNICATIONS EVENT LOG -->
             <div role="tabpanel" id="panel-events" aria-labelledby="tab-events" class="tab-panel" hidden="until-found">
               <div class="panel-inner">
+                <div id="events-filter-bar" class="events-filter-bar" role="group" aria-label="Filter event log by subsystem">
+                  <button type="button" class="mini-pill active" data-evt-filter="All" aria-pressed="true">All</button>
+                  <button type="button" class="mini-pill" data-evt-filter="Optical" aria-pressed="false">Optical</button>
+                  <button type="button" class="mini-pill" data-evt-filter="BGP" aria-pressed="false">BGP</button>
+                  <button type="button" class="mini-pill" data-evt-filter="PFE" aria-pressed="false">PFE</button>
+                  <button type="button" class="mini-pill" data-evt-filter="Repair" aria-pressed="false">Repair</button>
+                </div>
                 <ul id="events-list" class="events-list"></ul>
               </div>
             </div>
@@ -424,7 +616,85 @@
         <!-- Central Screen-Reader Announcer -->
         <div id="live-announcer" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
       </main>
+
+      <!-- Always-Visible Status Legend, Disclaimer & Credit Footer -->
+      <footer class="app-footer">
+        <div class="status-legend" aria-label="Trunk and path status legend">
+          <span class="legend-item"><i class="legend-swatch swatch-nominal" aria-hidden="true"></i>Nominal</span>
+          <span class="legend-item"><i class="legend-swatch swatch-degraded" aria-hidden="true"></i>Degraded</span>
+          <span class="legend-item"><i class="legend-swatch swatch-los" aria-hidden="true"></i>Optical LOS</span>
+          <span class="legend-item"><i class="legend-swatch swatch-path" aria-hidden="true"></i>Active BGP Path</span>
+          <span class="legend-item"><i class="legend-swatch swatch-inspected" aria-hidden="true"></i>Inspected</span>
+        </div>
+
+        <div class="footer-credit">
+          Built by <a href="https://x.com/itsMikeKipruto" target="_blank" rel="noopener noreferrer">@itsMikeKipruto</a> with Gemini 4 Argon ·
+          <a href="https://www.linkedin.com/in/itsmikekipruto/" target="_blank" rel="noopener noreferrer">LinkedIn</a> ·
+          <a href="https://mike.co.ke/links/" target="_blank" rel="noopener noreferrer">mike.co.ke</a> ·
+          <a href="https://github.com/kipmyk/abyssal-backbone" target="_blank" rel="noopener noreferrer">Source</a>
+        </div>
+
+        <div class="footer-disclaimer">
+          Simplified ITU-T G.977, PFE &amp; RFC 4271 educational simulator — not for operational routing or dispatch.
+        </div>
+      </footer>
     </div>
+
+    <!-- Native Accessible Guide, Glossary & Model Assumptions Modal -->
+    <dialog id="guide-dialog" class="sim-dialog" closedby="any" aria-labelledby="guide-dialog-title">
+      <div class="dialog-header">
+        <h2 id="guide-dialog-title">Abyssal Backbone Guide, Glossary &amp; Model Assumptions</h2>
+        <form method="dialog">
+          <button type="submit" class="btn-ghost" autofocus>Close</button>
+        </form>
+      </div>
+      <div class="dialog-body">
+        <section class="dialog-section">
+          <h3>How to Use This Simulator</h3>
+          <ul class="guide-list">
+            <li><strong>Viewports (Split / Seafloor / Globe):</strong> Switch views in the top bar. Press <kbd>F</kbd> or click <strong>Focus (F)</strong> to collapse panels and maximize 3D inspection.</li>
+            <li><strong>BGP-4 Path Inspector:</strong> Select origin and destination Cable Landing Stations (or click stations on the globe) to inspect <code>AS_PATH</code>, <code>LOCAL_PREF</code>, <code>MED</code>, and real-time detour paths.</li>
+            <li><strong>Fault Injection &amp; Before/After Comparison:</strong> Run any curated fault scenario or toggle <em>Globe Click: Fault / Repair</em> to sever/repair trunks directly. The Before/After card compares capacity, RTT, and every impacted BGP corridor.</li>
+            <li><strong>Cable Anatomy &amp; C-OTDR:</strong> Inspect individual trunks to see C-OTDR localization uncertainty, seabed depth/pressure, and live ROV splicing stages.</li>
+          </ul>
+        </section>
+
+        <section class="dialog-section">
+          <div class="section-header">
+            <h3>Subsea Optical &amp; BGP Glossary</h3>
+            <label for="glossary-filter" class="visually-hidden">Filter glossary terms</label>
+            <input id="glossary-filter" type="search" class="hud-input dialog-search" placeholder="Filter terms (e.g. GSNR, PFE, valley-free)..." />
+          </div>
+          <dl id="glossary-dl" class="glossary-dl"></dl>
+        </section>
+
+        <section class="dialog-section">
+          <h3>Model Simplifications &amp; Engineering Assumptions</h3>
+          <p class="disclaimer-callout">
+            <strong>Educational Disclaimer:</strong> This application models simplified physical-layer link budgets (ITU-T G.977), steady-state constant-current PFE, analytical bathymetry, and deterministic RFC 4271 path-vector routing for educational and scenario-exploration purposes only — not operational routing or marine repair dispatch.
+          </p>
+          <div id="dialog-assumptions-list" class="assumptions-grid"></div>
+        </section>
+
+        <div class="dialog-footer-credit">
+          Built by <a href="https://x.com/itsMikeKipruto" target="_blank" rel="noopener noreferrer">@itsMikeKipruto</a> with Gemini 4 Argon ·
+          <a href="https://www.linkedin.com/in/itsmikekipruto/" target="_blank" rel="noopener noreferrer">LinkedIn</a> ·
+          <a href="https://mike.co.ke/links/" target="_blank" rel="noopener noreferrer">mike.co.ke</a> ·
+          <a href="https://github.com/kipmyk/abyssal-backbone" target="_blank" rel="noopener noreferrer">Source</a>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- Native Accessible About Subsea System Modal -->
+    <dialog id="about-cable-dialog" class="sim-dialog sim-dialog-compact" closedby="any" aria-labelledby="about-cable-title">
+      <div class="dialog-header">
+        <h2 id="about-cable-title">Subsea Cable System Profile</h2>
+        <form method="dialog">
+          <button type="submit" class="btn-ghost" autofocus>Close</button>
+        </form>
+      </div>
+      <div id="about-cable-body" class="dialog-body"></div>
+    </dialog>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

@@ -1,23 +1,38 @@
 import './style.css';
 import { telemetryAudio } from './audio/telemetryAudio';
 import {
+  GLOSSARY_ENTRIES,
+  INLINE_TERM_HINTS,
+  MODEL_ASSUMPTIONS,
+} from './data/glossary';
+import {
   LANDING_STATIONS,
   SCENARIO_PRESETS,
   SUBSEA_CABLES,
 } from './data/networkData';
+import { getCableProvenance } from './data/provenance';
 import {
   GlobeScene,
   type HoverInfo,
   type ProjectedMarker,
+  type QualityModeSetting,
+  type RenderQualityTier,
 } from './globe/GlobeScene';
 import { STATION_ASN_MAP } from './sim/bgpEngine';
 import { computeSubseaRepairPlan } from './sim/repairEngine';
 import { RoutingEngine } from './sim/routingEngine';
 import {
+  computeImpactComparison,
+  hydrateEngineFromState,
+  parseSimulatorHash,
+  serializeSimulatorState,
+} from './sim/shareState';
+import {
   SubseaRovScene,
   type SubseaCameraMode,
 } from './subsea/SubseaRovScene';
 import type {
+  EventSubsystem,
   FaultCause,
   NetworkSnapshot,
   TrafficCorridor,
@@ -58,6 +73,68 @@ const kpiCapacity = document.getElementById('kpi-capacity')!;
 const kpiRtt = document.getElementById('kpi-rtt')!;
 const kpiSevered = document.getElementById('kpi-severed')!;
 const kpiRerouted = document.getElementById('kpi-rerouted')!;
+const kpiActivePath = document.getElementById('kpi-active-path')!;
+
+const btnDensitySimplified = document.getElementById(
+  'btn-density-simplified'
+) as HTMLButtonElement;
+const btnDensityEngineering = document.getElementById(
+  'btn-density-engineering'
+) as HTMLButtonElement;
+const btnGuide = document.getElementById('btn-guide') as HTMLButtonElement;
+const btnShareScenario = document.getElementById(
+  'btn-share-scenario'
+) as HTMLButtonElement;
+const shareLabel = document.getElementById('share-label')!;
+const btnContrast = document.getElementById('btn-contrast') as HTMLButtonElement;
+const contrastLabel = document.getElementById('contrast-label')!;
+const btnFocusMode = document.getElementById(
+  'btn-focus-mode'
+) as HTMLButtonElement;
+const btnExitFocus = document.getElementById(
+  'btn-exit-focus'
+) as HTMLButtonElement;
+
+const onboardingBanner = document.getElementById('onboarding-banner')!;
+const tourStepBadge = document.getElementById('tour-step-badge')!;
+const tourStepTitle = document.getElementById('tour-step-title')!;
+const tourStepBody = document.getElementById('tour-step-body')!;
+const btnTourAction = document.getElementById(
+  'btn-tour-action'
+) as HTMLButtonElement;
+const btnTourNext = document.getElementById(
+  'btn-tour-next'
+) as HTMLButtonElement;
+const btnTourGlossary = document.getElementById(
+  'btn-tour-glossary'
+) as HTMLButtonElement;
+const btnTourDismiss = document.getElementById(
+  'btn-tour-dismiss'
+) as HTMLButtonElement;
+
+const btnClickInspect = document.getElementById(
+  'btn-click-inspect'
+) as HTMLButtonElement;
+const btnClickFault = document.getElementById(
+  'btn-click-fault'
+) as HTMLButtonElement;
+const qualityBadge = document.getElementById('quality-badge')!;
+const qualityModeSelect = document.getElementById(
+  'quality-mode-select'
+) as HTMLSelectElement;
+
+const impactComparisonCard = document.getElementById('impact-comparison-card')!;
+const impactBadge = document.getElementById('impact-badge')!;
+const impactCapDelta = document.getElementById('impact-cap-delta')!;
+const impactRttDelta = document.getElementById('impact-rtt-delta')!;
+const impactPathDiff = document.getElementById('impact-path-diff')!;
+const impactFlowsList = document.getElementById('impact-flows-list')!;
+
+const historicalEventCard = document.getElementById('historical-event-card')!;
+const histDate = document.getElementById('hist-date')!;
+const histSummary = document.getElementById('hist-summary')!;
+const histImpact = document.getElementById('hist-impact')!;
+const histSource = document.getElementById('hist-source')!;
 
 const btnAudio = document.getElementById('btn-audio') as HTMLButtonElement;
 const audioLabel = document.getElementById('audio-label')!;
@@ -121,27 +198,59 @@ const seabedOtdrCanvas = document.getElementById(
 const btnDiveCable = document.getElementById(
   'btn-dive-cable'
 ) as HTMLButtonElement;
+const btnAboutCable = document.getElementById(
+  'btn-about-cable'
+) as HTMLButtonElement;
 const btnOtdrAction = document.getElementById(
   'btn-otdr-action'
 ) as HTMLButtonElement;
+const inlineAssumptionsBody = document.getElementById(
+  'inline-assumptions-body'
+)!;
 
+const repairTimelineCard = document.getElementById('repair-timeline-card')!;
+const repairEtrPill = document.getElementById('repair-etr-pill')!;
+const repairProgressFill = document.getElementById('repair-progress-fill')!;
 const repairSummaryBox = document.getElementById('repair-summary-box')!;
 const repairStepsList = document.getElementById('repair-steps-list')!;
 const cableSearchInput = document.getElementById(
   'cable-search'
 ) as HTMLInputElement;
 const cablesList = document.getElementById('cables-list')!;
+const eventsFilterBar = document.getElementById('events-filter-bar')!;
 const eventsList = document.getElementById('events-list')!;
+const guideDialog = document.getElementById(
+  'guide-dialog'
+) as HTMLDialogElement;
+const glossaryFilterInput = document.getElementById(
+  'glossary-filter'
+) as HTMLInputElement;
+const glossaryDl = document.getElementById('glossary-dl')!;
+const dialogAssumptionsList = document.getElementById(
+  'dialog-assumptions-list'
+)!;
+const aboutCableDialog = document.getElementById(
+  'about-cable-dialog'
+) as HTMLDialogElement;
+const aboutCableBody = document.getElementById('about-cable-body')!;
 const tooltipEl = document.getElementById('globe-tooltip')!;
 const announcerEl = document.getElementById('live-announcer')!;
 
 // App State
+const TOUR_STORAGE_KEY = 'abyssal-tour-dismissed-v1';
+const baselineSnapshot: NetworkSnapshot = engine.computeSnapshot();
 let activeScenarioId: string | null = null;
 let selectedCorridorId: string = 'mba-mrs';
 let inspectedCableId: string = 'aae1-redsea';
 let nextStationTarget: 'src' | 'dst' = 'dst';
 let motionPaused = false;
-let currentSnapshot: NetworkSnapshot = engine.computeSnapshot();
+let clickMode: 'inspect' | 'fault' = 'inspect';
+let densityMode: 'simplified' | 'engineering' = 'engineering';
+let highContrastMode = false;
+let focusMode = false;
+let activeEventFilter: 'All' | EventSubsystem = 'All';
+let activeQualityMode: QualityModeSetting = 'auto';
+let currentSnapshot: NetworkSnapshot = baselineSnapshot;
 let repairTickAccumulator = 0;
 
 function announce(msg: string): void {
@@ -164,14 +273,27 @@ const subseaRov = new SubseaRovScene(subseaRovContainer);
 
 // Initialize 3D Globe
 const globe = new GlobeScene(globeContainer, {
-  onCableClick: (cableId, cutCoord, progressT) => {
+  onCableClick: (cableId, cutCoord, progressT, shiftKey) => {
     const state = currentSnapshot.cables.get(cableId);
     const cable = SUBSEA_CABLES.find((c) => c.id === cableId);
     if (!state || !cable) return;
 
-    activeScenarioId = null;
     inspectedCableId = cableId;
     otdrCableSelect.value = cableId;
+    globe.setInspectedCable(cableId);
+
+    // Clearer inspect-first workflow unless Fault/Repair mode is selected or Shift is held
+    if (clickMode === 'inspect' && !shiftKey) {
+      telemetryAudio.playHoverTick();
+      globe.diveTo(cutCoord[0], cutCoord[1]);
+      syncUI();
+      announce(
+        `Inspecting ${cable.name} (${cable.systemCode}). Switch to Fault / Repair mode or hold Shift + click to inject a fault.`
+      );
+      return;
+    }
+
+    activeScenarioId = null;
 
     if (state.cutState === 'active') {
       engine.severCable(cableId, cutCoord, progressT);
@@ -182,6 +304,7 @@ const globe = new GlobeScene(globeContainer, {
     } else if (state.cutState === 'severed' || state.cutState === 'degraded') {
       engine.dispatchRepairShip(cableId);
       telemetryAudio.playRerouteChirp();
+      globe.flyTo(cutCoord[0], cutCoord[1], 19);
       announce(`Repair vessel mobilized for ${cable.name}.`);
     } else {
       engine.restoreCable(cableId);
@@ -219,6 +342,17 @@ const globe = new GlobeScene(globeContainer, {
 
   onMarkersUpdate: (markers) => {
     renderProjectedMarkers(markers);
+  },
+
+  onQualityChange: (tier: RenderQualityTier) => {
+    subseaRov.setQualityTier(tier);
+    const labelMap: Record<RenderQualityTier, string> = {
+      high: 'High',
+      balanced: 'Balanced',
+      eco: 'Eco',
+    };
+    const modePrefix = activeQualityMode === 'auto' ? 'Auto' : 'Manual';
+    qualityBadge.textContent = `Quality: ${modePrefix} (${labelMap[tier]})`;
   },
 });
 
@@ -335,6 +469,7 @@ function getHighlightedTrace(): TrafficCorridor | null {
 function syncUI(): void {
   currentSnapshot = engine.computeSnapshot();
   const highlighted = getHighlightedTrace();
+  globe.setInspectedCable(inspectedCableId);
   globe.updateSnapshot(
     currentSnapshot,
     highlighted?.currentCables ?? [],
@@ -343,6 +478,8 @@ function syncUI(): void {
 
   renderHeaderKPIs();
   renderScenarioButtons();
+  renderHistoricalContext();
+  renderImpactComparison();
   renderTraceroute();
   renderCorridorsTable();
   renderSeabedOtdrPanel();
@@ -374,6 +511,18 @@ function renderHeaderKPIs(): void {
     s.partitionedCount > 0 ? 'danger' : s.reroutedCount > 0 ? 'warn' : ''
   }`;
 
+  const activeTrace = getHighlightedTrace();
+  if (activeTrace && activeTrace.currentCables.length > 0) {
+    const codes = activeTrace.currentCables.map(
+      (id) => SUBSEA_CABLES.find((c) => c.id === id)?.systemCode ?? id
+    );
+    kpiActivePath.textContent = `${codes.join(' -> ')} (${activeTrace.currentRttMs.toFixed(1)} ms)`;
+  } else if (activeTrace) {
+    kpiActivePath.textContent = `${activeTrace.status}`;
+  } else {
+    kpiActivePath.textContent = '--';
+  }
+
   if (s.partitionedCount > 0) {
     globalStatusPill.textContent = 'BGP UNREACHABLE';
     globalStatusPill.className = 'status-pill status-critical';
@@ -384,6 +533,106 @@ function renderHeaderKPIs(): void {
     globalStatusPill.textContent = 'CONVERGED';
     globalStatusPill.className = 'status-pill status-optimal';
   }
+}
+
+function renderImpactComparison(): void {
+  const report = computeImpactComparison(baselineSnapshot, currentSnapshot);
+  if (!report.hasChanges) {
+    impactComparisonCard.hidden = true;
+    return;
+  }
+
+  impactComparisonCard.hidden = false;
+  impactBadge.textContent =
+    report.impactedCorridors.length > 0
+      ? `${report.impactedCorridors.length} FLOW${report.impactedCorridors.length > 1 ? 'S' : ''} SHIFTED`
+      : 'TRUNK FAULT';
+  impactBadge.className = `badge ${
+    report.impactedCorridors.length > 0 ? 'badge-rerouted' : 'badge-partitioned'
+  }`;
+
+  const capSign = report.capacityDeltaTbps > 0 ? '+' : '';
+  impactCapDelta.textContent = `${capSign}${report.capacityDeltaTbps} Tbps (${report.capacityDeltaPct}%)`;
+  impactCapDelta.className = `mono-val ${
+    report.capacityDeltaTbps < 0 ? 'delta-bad' : ''
+  }`;
+
+  const rttSign = report.meanRttDeltaMs > 0 ? '+' : '';
+  impactRttDelta.textContent = `${rttSign}${report.meanRttDeltaMs} ms`;
+  impactRttDelta.className = `mono-val ${
+    report.meanRttDeltaMs > 15 ? 'delta-bad' : report.meanRttDeltaMs > 1 ? 'delta-up' : ''
+  }`;
+
+  const trace = getHighlightedTrace();
+  if (trace && trace.bgpRoute) {
+    const baseCorridor = baselineSnapshot.corridors.find(
+      (c) => c.id === trace.id
+    );
+    const prevAs =
+      baseCorridor?.bgpRoute?.asPath.map((a) => `AS${a}`).join(' ') ??
+      'Direct Baseline';
+    const nextAs = trace.bgpRoute.asPath.map((a) => `AS${a}`).join(' ');
+    impactPathDiff.textContent =
+      prevAs === nextAs
+        ? `Inspected AS_PATH unchanged: [${nextAs}]`
+        : `Inspected AS_PATH: [${prevAs}] -> [${nextAs}]`;
+  } else if (trace) {
+    impactPathDiff.textContent = `Inspected Corridor: ${trace.status} (Route withdrawn or filtered)`;
+  } else {
+    impactPathDiff.textContent = '';
+  }
+
+  impactFlowsList.innerHTML = '';
+  for (const flow of report.impactedCorridors.slice(0, 6)) {
+    const li = document.createElement('li');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn-ghost';
+    btn.style.width = '100%';
+    btn.style.textAlign = 'left';
+    const rttDiffStr =
+      flow.status === 'PARTITIONED' || flow.status === 'POLICY_BLOCKED'
+        ? flow.status
+        : `+${flow.rttDeltaMs} ms`;
+    const cablesDiff =
+      flow.afterCables.length > 0 ? flow.afterCables.join('->') : 'NONE';
+    btn.textContent = `${flow.label}: ${rttDiffStr} via [${cablesDiff}]`;
+    btn.addEventListener('click', () => {
+      const target = currentSnapshot.corridors.find((c) => c.id === flow.id);
+      if (!target) return;
+      selectedCorridorId = target.id;
+      traceSrcSelect.value = target.srcId;
+      traceDstSelect.value = target.dstId;
+      engine.setCustomTraceEndpoints(target.srcId, target.dstId);
+      const srcSt = stationById.get(target.srcId);
+      const dstSt = stationById.get(target.dstId);
+      if (srcSt && dstSt) {
+        globe.flyTo((srcSt.lat + dstSt.lat) / 2, (srcSt.lon + dstSt.lon) / 2, 24);
+      }
+      syncUI();
+    });
+    li.appendChild(btn);
+    impactFlowsList.appendChild(li);
+  }
+}
+
+function renderHistoricalContext(): void {
+  if (!activeScenarioId) {
+    historicalEventCard.hidden = true;
+    return;
+  }
+  const preset = SCENARIO_PRESETS.find((p) => p.id === activeScenarioId);
+  const hist = preset?.historicalEvent;
+  if (!hist) {
+    historicalEventCard.hidden = true;
+    return;
+  }
+
+  historicalEventCard.hidden = false;
+  histDate.textContent = hist.date;
+  histSummary.textContent = hist.factualSummary;
+  histImpact.textContent = `Observed impact: ${hist.impactHighlight}`;
+  histSource.textContent = `Reference: ${hist.sourceNote}`;
 }
 
 function renderScenarioButtons(): void {
@@ -640,6 +889,43 @@ function renderRepairPanel(): void {
       ? `AWAITING DISPATCH (Est. Total Duration: ${plan.totalEstimatedHours} hours)`
       : `STANDBY ENGINEERING ESTIMATE (If faulted at midpoint: ${plan.totalEstimatedHours} hours)`;
 
+  repairTimelineCard.hidden = false;
+  const pct =
+    st.cutState === 'repairing'
+      ? Math.max(4, Math.min(100, Math.round(st.repairProgress * 100)))
+      : 0;
+  repairProgressFill.style.inlineSize = `${pct}%`;
+  repairEtrPill.textContent =
+    st.cutState === 'repairing'
+      ? `ETR ${plan.remainingHours}h (${pct}%)`
+      : st.cutState === 'severed' || st.cutState === 'degraded'
+      ? `Est. ${plan.totalEstimatedHours}h`
+      : 'Standby';
+
+  const currentIdx = st.cutState === 'repairing' ? plan.currentStepIndex : -1;
+  const phaseRanges: Array<{ phase: string; min: number; max: number }> = [
+    { phase: 'steaming', min: 0, max: 3 },
+    { phase: 'grappling', min: 4, max: 7 },
+    { phase: 'splicing', min: 8, max: 11 },
+    { phase: 'pfe-ramp', min: 12, max: 14 },
+  ];
+  repairTimelineCard
+    .querySelectorAll<HTMLElement>('.repair-phases-row span[data-phase]')
+    .forEach((el) => {
+      const range = phaseRanges.find((p) => p.phase === el.dataset.phase);
+      if (!range) return;
+      el.classList.toggle(
+        'is-done',
+        currentIdx > range.max && st.cutState === 'repairing'
+      );
+      el.classList.toggle(
+        'is-active',
+        st.cutState === 'repairing' &&
+          currentIdx >= range.min &&
+          currentIdx <= range.max
+      );
+    });
+
   repairSummaryBox.textContent = `${stateTag} | Assigned Vessel: ${plan.vessel.name} (${plan.vessel.operator}, Depot: ${plan.vessel.depotCity}, ${plan.transitDistanceNm} NM) | Depth: ${plan.waterDepthM}m | Burial: ${plan.burialDepthM}m | Sea State: Beaufort ${plan.seaStateBeaufort} (${plan.significantWaveHeightM}m) | Method: ${plan.recoveryMethod} | Spare Bight: ${plan.spareCableInsertedKm} km (${plan.universalJointCount}x UJ)`;
 
   repairStepsList.innerHTML = '';
@@ -770,8 +1056,16 @@ function renderCablesList(): void {
       shipBtn.className = 'cable-action-btn repair';
       shipBtn.textContent = 'Mobilize Ship';
       shipBtn.addEventListener('click', () => {
+        inspectedCableId = cable.id;
+        otdrCableSelect.value = cable.id;
         engine.dispatchRepairShip(cable.id);
         telemetryAudio.playRerouteChirp();
+        const stNow = currentSnapshot.cables.get(cable.id);
+        const focusCoord =
+          stNow?.cutCoord ??
+          cable.waypoints[Math.floor(cable.waypoints.length / 2)];
+        globe.flyTo(focusCoord[0], focusCoord[1], 19.5);
+        announce(`Repair vessel mobilized for ${cable.name}.`);
         syncUI();
       });
       const spliceBtn = document.createElement('button');
@@ -804,13 +1098,31 @@ function renderCablesList(): void {
 
 function renderEventsLog(): void {
   eventsList.innerHTML = '';
-  for (const evt of engine.getEvents()) {
+  const allEvents = engine.getEvents();
+  const filtered =
+    activeEventFilter === 'All'
+      ? allEvents
+      : allEvents.filter((evt) => evt.subsystem === activeEventFilter);
+
+  if (filtered.length === 0) {
+    const emptyLi = document.createElement('li');
+    emptyLi.className = 'event-item info';
+    emptyLi.textContent = `No ${activeEventFilter} telemetry events recorded yet.`;
+    eventsList.appendChild(emptyLi);
+    return;
+  }
+
+  for (const evt of filtered) {
     const li = document.createElement('li');
     li.className = `event-item ${evt.severity}`;
     li.innerHTML = `
       <div class="event-head">
         <span class="event-code">${escapeHtml(evt.code)}</span>
-        <span>${escapeHtml(evt.timestamp)}</span>
+        <span class="event-meta-row">
+          <span class="event-subsystem-badge">${escapeHtml(evt.subsystem)}</span>
+          <span class="event-rel-time">${escapeHtml(evt.relativeTime)}</span>
+          <span>${escapeHtml(evt.timestamp)}</span>
+        </span>
       </div>
       <div class="event-msg">${escapeHtml(evt.message)}</div>
     `;
@@ -1064,6 +1376,7 @@ chkOrbit.addEventListener('change', () => globe.setAutoOrbit(chkOrbit.checked));
 
 otdrCableSelect.addEventListener('change', () => {
   inspectedCableId = otdrCableSelect.value;
+  globe.setInspectedCable(inspectedCableId);
   renderSeabedOtdrPanel();
   renderRepairPanel();
 });
@@ -1102,6 +1415,16 @@ btnOtdrAction.addEventListener('click', () => {
   } else if (st.cutState === 'severed' || st.cutState === 'degraded') {
     engine.dispatchRepairShip(inspectedCableId);
     telemetryAudio.playRerouteChirp();
+    const cableObj = SUBSEA_CABLES.find((c) => c.id === inspectedCableId);
+    const focusCoord =
+      st.cutCoord ??
+      cableObj?.waypoints[Math.floor((cableObj?.waypoints.length ?? 2) / 2)];
+    if (focusCoord) {
+      globe.flyTo(focusCoord[0], focusCoord[1], 19.5);
+    }
+    const repairTab = document.getElementById('tab-repair') as HTMLButtonElement | null;
+    repairTab?.click();
+    announce(`Repair vessel mobilized for ${cableObj?.name ?? inspectedCableId}.`);
   } else {
     engine.restoreCable(inspectedCableId);
     telemetryAudio.playRepairSplice();
@@ -1149,9 +1472,458 @@ if (seabedOtdrCanvas.parentElement && typeof ResizeObserver !== 'undefined') {
   otdrResizeObserver.observe(seabedOtdrCanvas.parentElement);
 }
 
+function populateTermHints(): void {
+  const hintMap: Record<string, string> = {
+    'hint-bgp': 'bgp',
+    'hint-cls': 'cls',
+    'hint-gsnr': 'gsnr',
+    'hint-qfactor': 'qfactor',
+    'hint-pfe': 'pfe',
+  };
+  for (const [elId, hintKey] of Object.entries(hintMap)) {
+    const el = document.getElementById(elId);
+    const data = INLINE_TERM_HINTS[hintKey];
+    if (!el || !data) continue;
+    el.innerHTML = `<h4>${escapeHtml(data.title)}</h4><p>${escapeHtml(data.body)}</p>`;
+  }
+}
+
+function renderGlossary(filterQuery = ''): void {
+  const q = filterQuery.trim().toLowerCase();
+  glossaryDl.innerHTML = '';
+  const filtered = GLOSSARY_ENTRIES.filter((entry) => {
+    if (!q) return true;
+    return (
+      entry.term.toLowerCase().includes(q) ||
+      entry.shortLabel.toLowerCase().includes(q) ||
+      entry.category.toLowerCase().includes(q) ||
+      entry.definition.toLowerCase().includes(q)
+    );
+  });
+
+  if (filtered.length === 0) {
+    const emptyDiv = document.createElement('div');
+    emptyDiv.className = 'glossary-item';
+    emptyDiv.textContent = 'No matching glossary entries found.';
+    glossaryDl.appendChild(emptyDiv);
+    return;
+  }
+
+  for (const entry of filtered) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'glossary-item';
+    wrapper.innerHTML = `
+      <dt>${escapeHtml(entry.shortLabel)} <span class="glossary-cat">${escapeHtml(entry.category)}</span></dt>
+      <dd>${escapeHtml(entry.definition)}</dd>
+    `;
+    glossaryDl.appendChild(wrapper);
+  }
+}
+
+function renderAssumptions(): void {
+  const buildMarkup = () =>
+    MODEL_ASSUMPTIONS.map(
+      (group) => `
+      <div class="assumption-group">
+        <h4>${escapeHtml(group.title)}</h4>
+        <ul>${group.items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
+      </div>`
+    ).join('');
+
+  dialogAssumptionsList.innerHTML = buildMarkup();
+  inlineAssumptionsBody.innerHTML = buildMarkup();
+}
+
+function openAboutCableDialog(cableId: string): void {
+  const cable = SUBSEA_CABLES.find((c) => c.id === cableId);
+  if (!cable) return;
+  const prov = getCableProvenance(cable);
+  const st = currentSnapshot.cables.get(cable.id);
+  const endpoints = `${stationById.get(cable.endpoints[0])?.city ?? cable.endpoints[0]} <-> ${stationById.get(cable.endpoints[1])?.city ?? cable.endpoints[1]}`;
+
+  aboutCableBody.innerHTML = `
+    <div class="about-spec-grid">
+      <div class="about-spec-cell">
+        <span class="about-spec-label">System Name / Code</span>
+        <span class="about-spec-value">${escapeHtml(cable.name)} (${escapeHtml(cable.systemCode)})</span>
+      </div>
+      <div class="about-spec-cell">
+        <span class="about-spec-label">Route Endpoints</span>
+        <span class="about-spec-value">${escapeHtml(endpoints)}</span>
+      </div>
+      <div class="about-spec-cell">
+        <span class="about-spec-label">Route Length</span>
+        <span class="about-spec-value">${cable.lengthKm.toLocaleString()} km (${cable.waypoints.length} plotted vertices)</span>
+      </div>
+      <div class="about-spec-cell">
+        <span class="about-spec-label">Ready for Service (RFS)</span>
+        <span class="about-spec-value">${cable.rfsYear}</span>
+      </div>
+      <div class="about-spec-cell">
+        <span class="about-spec-label">Design Capacity / Pairs</span>
+        <span class="about-spec-value">${cable.capacityTbps} Tbps · ${prov.fiberPairs} Fiber Pairs</span>
+      </div>
+      <div class="about-spec-cell">
+        <span class="about-spec-label">Branching &amp; Zone</span>
+        <span class="about-spec-value">${prov.branchingUnits.length} BU · ${escapeHtml(prov.maintenanceZone)}</span>
+      </div>
+    </div>
+    <div class="assumption-group">
+      <h4>Owners / Consortium &amp; Provenance</h4>
+      <ul>
+        <li><strong>Owners:</strong> ${escapeHtml(cable.owners)}</li>
+        <li><strong>Corridor / Fiber Spec:</strong> ${escapeHtml(cable.corridorTag)} · ${escapeHtml(st?.optical.fiberStandard ?? 'ITU-T G.654.E / G.652.D')} (Route: ${escapeHtml(prov.routeConfidence)}, Cap: ${escapeHtml(prov.capacityConfidence)})</li>
+        <li><strong>Citation:</strong> ${escapeHtml(prov.sourceCitation)} (${escapeHtml(prov.sourceDate)})</li>
+        <li><strong>Branching Units:</strong> ${prov.branchingUnits.length > 0 ? escapeHtml(prov.branchingUnits.map((b) => `${b.name} (${b.opticalRouting})`).join(', ')) : 'Point-to-point trunk (no subsea BU)'}</li>
+      </ul>
+    </div>
+    <p class="disclaimer-callout">
+      Educational system summary derived from public ITU/TeleGeography/operator disclosures. Synthetic telemetry parameters are approximations.
+    </p>
+  `;
+
+  if (typeof aboutCableDialog.showModal === 'function') {
+    aboutCableDialog.showModal();
+  }
+}
+
+function setDensityMode(mode: 'simplified' | 'engineering'): void {
+  densityMode = mode;
+  appShell.dataset.density = mode;
+  btnDensitySimplified.classList.toggle('active', mode === 'simplified');
+  btnDensityEngineering.classList.toggle('active', mode === 'engineering');
+  btnDensitySimplified.setAttribute(
+    'aria-pressed',
+    String(mode === 'simplified')
+  );
+  btnDensityEngineering.setAttribute(
+    'aria-pressed',
+    String(mode === 'engineering')
+  );
+  announce(`Telemetry density set to ${mode} mode.`);
+}
+
+function setContrastTheme(enabled: boolean): void {
+  highContrastMode = enabled;
+  if (enabled) {
+    appShell.dataset.theme = 'high-contrast';
+  } else {
+    delete appShell.dataset.theme;
+  }
+  btnContrast.setAttribute('aria-pressed', String(enabled));
+  contrastLabel.textContent = enabled ? 'Standard Theme' : 'High Contrast';
+  announce(enabled ? 'High-contrast theme enabled.' : 'Standard theme restored.');
+}
+
+function setFocusMode(enabled: boolean): void {
+  focusMode = enabled;
+  appShell.classList.toggle('focus-mode', enabled);
+  btnFocusMode.setAttribute('aria-pressed', String(enabled));
+  btnExitFocus.hidden = !enabled;
+  window.dispatchEvent(new Event('resize'));
+  announce(
+    enabled
+      ? 'Focus mode enabled: side panels hidden. Press F or click Exit Focus Mode to restore.'
+      : 'Focus mode exited: panels restored.'
+  );
+}
+
+function setClickMode(mode: 'inspect' | 'fault'): void {
+  clickMode = mode;
+  btnClickInspect.classList.toggle('active', mode === 'inspect');
+  btnClickFault.classList.toggle('active', mode === 'fault');
+  btnClickInspect.setAttribute('aria-pressed', String(mode === 'inspect'));
+  btnClickFault.setAttribute('aria-pressed', String(mode === 'fault'));
+  announce(`Globe cable click mode set to ${mode}.`);
+}
+
+function setupDialogBackdropFallbacks(): void {
+  const dialogs = [guideDialog, aboutCableDialog];
+  for (const dlg of dialogs) {
+    if ('closedBy' in HTMLDialogElement.prototype) continue;
+    let pointerStartedOutside = false;
+    dlg.addEventListener('pointerdown', (e) => {
+      if (e.target !== dlg) {
+        pointerStartedOutside = false;
+        return;
+      }
+      const rect = dlg.getBoundingClientRect();
+      pointerStartedOutside =
+        e.clientX < rect.left ||
+        e.clientX > rect.right ||
+        e.clientY < rect.top ||
+        e.clientY > rect.bottom;
+    });
+    dlg.addEventListener('pointerup', (e) => {
+      if (!pointerStartedOutside || e.target !== dlg) return;
+      const rect = dlg.getBoundingClientRect();
+      const outside =
+        e.clientX < rect.left ||
+        e.clientX > rect.right ||
+        e.clientY < rect.top ||
+        e.clientY > rect.bottom;
+      if (outside) dlg.close();
+      pointerStartedOutside = false;
+    });
+  }
+}
+
+function setupToggletipSync(): void {
+  document.addEventListener(
+    'toggle',
+    (e) => {
+      const target = e.target as HTMLElement | null;
+      if (!target?.id) return;
+      const invoker = document.querySelector<HTMLButtonElement>(
+        `[popovertarget="${target.id}"]`
+      );
+      if (!invoker) return;
+      invoker.setAttribute(
+        'aria-expanded',
+        String((e as ToggleEvent).newState === 'open')
+      );
+    },
+    true
+  );
+}
+
+function setupOnboardingTour(): void {
+  const TOUR_STEPS = [
+    {
+      title: 'Explore the Three 3D Viewports',
+      body: 'Switch between Split (Globe + Seabed ROV), 3D Seafloor cutaway, and Hydrographic Globe in the top bar. Press F anytime for Focus Mode.',
+      actionLabel: 'Preview Globe View',
+      runAction: () => setViewMode(appShell.dataset.viewMode === 'globe' ? 'split' : 'globe'),
+    },
+    {
+      title: 'Inspect BGP-4 Paths & Detours',
+      body: 'Click two Cable Landing Stations on the globe (or pick Origin/Destination in the left dock) to inspect live AS_PATH, LOCAL_PREF, MED, and policy filters.',
+      actionLabel: 'Trace Mombasa -> Marseille',
+      runAction: () => {
+        traceSrcSelect.value = 'mombasa';
+        traceDstSelect.value = 'marseille';
+        engine.setCustomTraceEndpoints('mombasa', 'marseille');
+        selectedCorridorId = 'mba-mrs';
+        syncUI();
+      },
+    },
+    {
+      title: 'Simulate Real-World Cuts & Compare Impact',
+      body: 'Trigger the 2024 Red Sea Multi-Cable Cut or use Fault / Repair click mode on any trunk, then review Before/After capacity, RTT, and BGP diff deltas.',
+      actionLabel: 'Simulate Red Sea Cut',
+      runAction: () => {
+        const redSeaBtn = scenarioList.querySelector<HTMLButtonElement>(
+          '[data-scenario-id="red-sea-blackout"]'
+        );
+        redSeaBtn?.click();
+      },
+    },
+    {
+      title: 'Switch Density or Open Engineering Glossary',
+      body: 'Toggle Simplified mode for essential KPIs & active path, or Engineering mode for full ITU-T G.977 optical budgets, PFE voltages, and C-OTDR traces.',
+      actionLabel: 'Toggle Simplified / Eng',
+      runAction: () =>
+        setDensityMode(
+          densityMode === 'engineering' ? 'simplified' : 'engineering'
+        ),
+    },
+  ];
+
+  let stepIdx = 0;
+
+  const renderStep = () => {
+    const step = TOUR_STEPS[stepIdx];
+    tourStepBadge.textContent = `TOUR · ${stepIdx + 1} / ${TOUR_STEPS.length}`;
+    tourStepTitle.textContent = step.title;
+    tourStepBody.textContent = step.body;
+    btnTourAction.textContent = step.actionLabel;
+    btnTourNext.textContent =
+      stepIdx === TOUR_STEPS.length - 1 ? 'Finish' : 'Next';
+  };
+
+  btnTourAction.addEventListener('click', () => {
+    TOUR_STEPS[stepIdx].runAction();
+  });
+
+  btnTourNext.addEventListener('click', () => {
+    if (stepIdx < TOUR_STEPS.length - 1) {
+      stepIdx += 1;
+      renderStep();
+    } else {
+      onboardingBanner.hidden = true;
+      try {
+        localStorage.setItem(TOUR_STORAGE_KEY, '1');
+      } catch {
+        /* ignore storage restrictions */
+      }
+    }
+  });
+
+  btnTourGlossary.addEventListener('click', () => {
+    renderGlossary(glossaryFilterInput.value);
+    if (typeof guideDialog.showModal === 'function') {
+      guideDialog.showModal();
+    }
+  });
+
+  btnTourDismiss.addEventListener('click', () => {
+    onboardingBanner.hidden = true;
+    try {
+      localStorage.setItem(TOUR_STORAGE_KEY, '1');
+    } catch {
+      /* ignore storage restrictions */
+    }
+  });
+
+  let dismissed = false;
+  try {
+    dismissed = localStorage.getItem(TOUR_STORAGE_KEY) === '1';
+  } catch {
+    dismissed = false;
+  }
+
+  if (!dismissed && !location.hash.startsWith('#s=')) {
+    renderStep();
+    onboardingBanner.hidden = false;
+  }
+}
+
+btnDensitySimplified.addEventListener('click', () =>
+  setDensityMode('simplified')
+);
+btnDensityEngineering.addEventListener('click', () =>
+  setDensityMode('engineering')
+);
+
+btnGuide.addEventListener('click', () => {
+  renderGlossary(glossaryFilterInput.value);
+  if (typeof guideDialog.showModal === 'function') {
+    guideDialog.showModal();
+  }
+});
+
+glossaryFilterInput.addEventListener('input', () => {
+  renderGlossary(glossaryFilterInput.value);
+});
+
+btnAboutCable.addEventListener('click', () => {
+  openAboutCableDialog(inspectedCableId);
+});
+
+btnContrast.addEventListener('click', () => {
+  setContrastTheme(!highContrastMode);
+});
+
+btnFocusMode.addEventListener('click', () => {
+  setFocusMode(!focusMode);
+});
+
+btnExitFocus.addEventListener('click', () => {
+  setFocusMode(false);
+});
+
+btnClickInspect.addEventListener('click', () => setClickMode('inspect'));
+btnClickFault.addEventListener('click', () => setClickMode('fault'));
+
+qualityModeSelect.addEventListener('change', () => {
+  const mode = (qualityModeSelect.value as QualityModeSetting) ?? 'auto';
+  activeQualityMode = mode;
+  globe.setQualityMode(mode);
+  if (mode === 'high' || mode === 'eco') {
+    subseaRov.setQualityTier(mode);
+  }
+  announce(`Render quality set to ${mode}.`);
+});
+
+eventsFilterBar.addEventListener('click', (e) => {
+  const btn = (e.target as HTMLElement).closest<HTMLButtonElement>(
+    'button[data-evt-filter]'
+  );
+  if (!btn) return;
+  activeEventFilter = (btn.dataset.evtFilter as 'All' | EventSubsystem) ?? 'All';
+  eventsFilterBar
+    .querySelectorAll<HTMLButtonElement>('button[data-evt-filter]')
+    .forEach((b) => {
+      const isSelected = b === btn;
+      b.classList.toggle('active', isSelected);
+      b.setAttribute('aria-pressed', String(isSelected));
+    });
+  renderEventsLog();
+});
+
+btnShareScenario.addEventListener('click', async () => {
+  const hash = serializeSimulatorState({
+    snapshot: currentSnapshot,
+    activeScenarioId,
+    srcId: traceSrcSelect.value,
+    dstId: traceDstSelect.value,
+    inspectedCableId,
+    viewMode:
+      (appShell.dataset.viewMode as 'split' | 'subsea' | 'globe') ?? 'split',
+    density: densityMode,
+    highContrast: highContrastMode,
+  });
+  history.replaceState(null, '', hash);
+  const fullUrl = window.location.href;
+  try {
+    await navigator.clipboard.writeText(fullUrl);
+    shareLabel.textContent = 'Copied Link';
+  } catch {
+    shareLabel.textContent = 'URL Updated';
+  }
+  announce('Shareable scenario state encoded in browser URL.');
+  setTimeout(() => {
+    shareLabel.textContent = 'Share';
+  }, 2200);
+});
+
+window.addEventListener('keydown', (e) => {
+  if (
+    e.key.toLowerCase() === 'f' &&
+    !e.metaKey &&
+    !e.ctrlKey &&
+    !e.altKey &&
+    !(
+      e.target instanceof HTMLInputElement ||
+      e.target instanceof HTMLSelectElement ||
+      e.target instanceof HTMLTextAreaElement
+    ) &&
+    !guideDialog.open &&
+    !aboutCableDialog.open
+  ) {
+    e.preventDefault();
+    setFocusMode(!focusMode);
+  }
+});
+
 // Boot
 initStaticControls();
 setupTabs();
+populateTermHints();
+renderGlossary();
+renderAssumptions();
+setupDialogBackdropFallbacks();
+setupToggletipSync();
+setupOnboardingTour();
 chkOrbit.checked = true;
 globe.setAutoOrbit(true);
+
+const initialHashState = parseSimulatorHash(location.hash);
+if (initialHashState) {
+  activeScenarioId = initialHashState.sc ?? null;
+  hydrateEngineFromState(engine, initialHashState);
+  if (initialHashState.src && initialHashState.dst) {
+    traceSrcSelect.value = initialHashState.src;
+    traceDstSelect.value = initialHashState.dst;
+    engine.setCustomTraceEndpoints(initialHashState.src, initialHashState.dst);
+  }
+  if (initialHashState.ins) {
+    inspectedCableId = initialHashState.ins;
+    otdrCableSelect.value = initialHashState.ins;
+  }
+  if (initialHashState.vm) setViewMode(initialHashState.vm);
+  if (initialHashState.dn) setDensityMode(initialHashState.dn);
+  setContrastTheme(Boolean(initialHashState.hc));
+}
+
 syncUI();

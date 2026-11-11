@@ -1,4 +1,5 @@
 import { sampleSeabedDepthMeters } from '../data/bathymetry';
+import { GLOSSARY_ENTRIES, MODEL_ASSUMPTIONS } from '../data/glossary';
 import { SCENARIO_PRESETS, SUBSEA_CABLES } from '../data/networkData';
 import { sampleCableEngineeringAtPoint } from '../data/provenance';
 import { compareBgpRoutes, type BgpRouteAdvertisement } from './bgpEngine';
@@ -7,6 +8,12 @@ import { computeOtdrAnalysis } from './otdrEngine';
 import { computePfeState } from './pfeEngine';
 import { computeSubseaRepairPlan } from './repairEngine';
 import { RoutingEngine } from './routingEngine';
+import {
+  computeImpactComparison,
+  hydrateEngineFromState,
+  parseSimulatorHash,
+  serializeSimulatorState,
+} from './shareState';
 
 function assert(condition: boolean, message: string): void {
   if (!condition) {
@@ -219,6 +226,69 @@ export function runEngineeringVerificationSuite(): void {
       `[PASS] Scenario [${preset.id}]: LOS=${snap.severedCount}, DEG=${snap.degradedCount}, Rerouted=${snap.reroutedCount} | ${target.id}: ${target.baselineRttMs}ms -> ${target.currentRttMs}ms (${target.status})`
     );
   }
+
+  // 8. Usability, Historical Presets, Event Timestamps, Impact Comparison & URL Share Hydration
+  assert(
+    GLOSSARY_ENTRIES.length >= 10 && MODEL_ASSUMPTIONS.length >= 3,
+    'Expected populated glossary entries and model assumption groups'
+  );
+  const redSeaPreset = SCENARIO_PRESETS.find((p) => p.id === 'red-sea-blackout');
+  assert(
+    Boolean(redSeaPreset?.historicalEvent?.date),
+    'Expected red-sea-blackout preset to carry factual historicalEvent metadata'
+  );
+
+  const shareEngine = new RoutingEngine();
+  const baseSnap = shareEngine.computeSnapshot();
+  shareEngine.applyScenario(
+    redSeaPreset!.cableIdsToCut,
+    redSeaPreset!.name,
+    redSeaPreset!.cause,
+    redSeaPreset!.subsystemFaultMode,
+    redSeaPreset!.bgpConfig
+  );
+  const faultSnap = shareEngine.computeSnapshot();
+  const faultEvents = shareEngine.getEvents();
+  assert(
+    faultEvents.some((e) => e.subsystem === 'Optical' && e.relativeTime.startsWith('T+')),
+    'Expected fault events to include Optical subsystem tag and T+ relative timestamp'
+  );
+
+  const comparison = computeImpactComparison(baseSnap, faultSnap);
+  assert(
+    comparison.hasChanges &&
+      comparison.capacityDeltaTbps < 0 &&
+      comparison.impactedCorridors.length > 0,
+    'Expected computeImpactComparison to report negative capacity delta and impacted BGP corridors'
+  );
+
+  const hash = serializeSimulatorState({
+    snapshot: faultSnap,
+    activeScenarioId: 'red-sea-blackout',
+    srcId: 'mombasa',
+    dstId: 'marseille',
+    inspectedCableId: 'aae1-redsea',
+    viewMode: 'split',
+    density: 'simplified',
+    highContrast: true,
+  });
+  const parsed = parseSimulatorHash(hash);
+  assert(
+    parsed !== null && (parsed.f?.length ?? 0) === redSeaPreset!.cableIdsToCut.length,
+    `Expected share hash round-trip with ${redSeaPreset!.cableIdsToCut.length} serialized faults`
+  );
+
+  const rehydrated = new RoutingEngine();
+  hydrateEngineFromState(rehydrated, parsed!);
+  const rehydratedSnap = rehydrated.computeSnapshot();
+  assert(
+    rehydratedSnap.severedCount === faultSnap.severedCount &&
+      rehydratedSnap.totalActiveTbps === faultSnap.totalActiveTbps,
+    `Expected hydrated snapshot to match faulted state (${faultSnap.severedCount} LOS, ${faultSnap.totalActiveTbps} Tbps)`
+  );
+  console.log(
+    `[PASS] Usability & State Suite: Impact ΔCap=${comparison.capacityDeltaTbps} Tbps, Events=${faultEvents.length}, Share Hash Length=${hash.length} chars.`
+  );
 
   console.log('=== ALL PHASE 1-10 ENGINEERING & SCIENTIFIC INTEGRITY TESTS PASSED ===');
 }
