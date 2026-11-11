@@ -1775,17 +1775,17 @@ function setupOnboardingTour(): void {
     }
   });
 
-  let dismissed = false;
-  try {
-    dismissed = localStorage.getItem(TOUR_STORAGE_KEY) === '1';
-  } catch {
-    dismissed = false;
-  }
-
-  if (!dismissed && !location.hash.startsWith('#s=')) {
+  const startTourBtn = document.getElementById('btn-start-tour');
+  startTourBtn?.addEventListener('click', () => {
+    stepIdx = 0;
     renderStep();
+    if (guideDialog.open) guideDialog.close();
     onboardingBanner.hidden = false;
-  }
+    announce('Interactive quick-start tour opened.');
+  });
+
+  // Keep viewport unobstructed by default; tour launches on demand from Guide dialog
+  onboardingBanner.hidden = true;
 }
 
 btnDensitySimplified.addEventListener('click', () =>
